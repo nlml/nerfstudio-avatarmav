@@ -17,23 +17,15 @@ Code for sampling pixels.
 """
 
 import random
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Type, Union
 
 import torch
 from jaxtyping import Int
 from torch import Tensor
 
-from dataclasses import dataclass, field
+from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.data.utils.pixel_sampling_utils import erode_mask
-from typing import (
-    Dict,
-    Optional,
-    Type,
-    Union,
-)
-
-from nerfstudio.configs.base_config import (
-    InstantiateConfig,
-)
 
 
 @dataclass
@@ -67,6 +59,8 @@ class PixelSampler:
         self.config.keep_full_image = self.kwargs.get("keep_full_image", self.config.keep_full_image)
         self.config.is_equirectangular = self.kwargs.get("is_equirectangular", self.config.is_equirectangular)
         self.set_num_rays_per_batch(self.config.num_rays_per_batch)
+        # TODO(LS) make this disabled by default
+        self.num_unique_images_per_batch = 4
 
     def set_num_rays_per_batch(self, num_rays_per_batch: int):
         """Set the number of rays to sample per batch.
@@ -97,11 +91,21 @@ class PixelSampler:
             nonzero_indices = torch.nonzero(mask[..., 0], as_tuple=False)
             chosen_indices = random.sample(range(len(nonzero_indices)), k=batch_size)
             indices = nonzero_indices[chosen_indices]
+            # TODO(LS): Delete this later, its just to ensure we dont enter here for avatarmav
+            raise Exception("we don't wanna be using this!!")
         else:
             indices = (
                 torch.rand((batch_size, 3), device=device)
                 * torch.tensor([num_images, image_height, image_width], device=device)
             ).long()
+            if self.num_unique_images_per_batch is not None:
+                # Then we want to sample a fixed number of unique images per batch.
+                # We sample the same number of pixels for each image and stack them in order.
+                assert batch_size % self.num_unique_images_per_batch == 0
+                selected_images = torch.randperm(num_images)[: self.num_unique_images_per_batch].repeat_interleave(
+                    batch_size // self.num_unique_images_per_batch
+                )
+                indices[:, 0] = selected_images
 
         return indices
 
