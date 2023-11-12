@@ -132,6 +132,7 @@ class HeadModule(nn.Module):
         feature_bbox=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
         noise=0.0,
         deform_scale=0.1,
+        invert_pose=False,
     ):
         super(HeadModule, self).__init__()
         self.exp_dim = exp_dim
@@ -148,6 +149,7 @@ class HeadModule(nn.Module):
         self.feature_bbox = feature_bbox
         self.noise = noise
         self.deform_scale = deform_scale
+        self.invert_pose = invert_pose
 
         self.deform_bs_volume = nn.Parameter(
             torch.zeros(
@@ -180,15 +182,25 @@ class HeadModule(nn.Module):
 
         self.default_pose = torch.zeros([1, 6])
 
+    def _rot_trans_from_pose(self, pose):
+        R = _so3_exp_map(pose[:, :3])
+        T = pose[:, 3:, None]
+        if self.invert_pose:
+            R = R.permute(0, 2, 1)
+            T = -torch.bmm(R, T)
+        return R, T
+
     def density(self, query_pts, exp, pose=None, scale=None):
         # positions = rearrange(positions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
         # exp = rearrange(exp, "(n rays) expdim -> n expdim rays", n=self.num_cameras_per_batch)
 
         B, C, N = query_pts.shape
-        if pose is not None and scale is not None:
-            R = _so3_exp_map(pose[:, :3])
-            T = pose[:, 3:, None]
-            S = scale[:, :, None]
+        if pose is not None:
+            R, T = self._rot_trans_from_pose(pose)
+            if scale is not None:
+                S = scale[:, :, None]
+            else:
+                S = 1.0
             query_pts = torch.bmm(R.permute(0, 2, 1), (query_pts - T)) / S
 
         exp_expanded = exp[:, : self.exp_dim, None, None, None, None]
@@ -222,7 +234,7 @@ class HeadModule(nn.Module):
         # exp should have shape [nCams, expDim]
         B, C, N = query_viewdirs.shape
         if pose is not None:
-            R = _so3_exp_map(pose[:, :3])
+            R, _ = self._rot_trans_from_pose(pose)
             query_viewdirs = torch.bmm(R.permute(0, 2, 1), query_viewdirs)
         query_viewdirs_embedding = self.view_embedding(rearrange(query_viewdirs, "b c n -> (b n) c"))
         # TODO(LS): Maybe shouldn't feed exp here to prevent overfitting.... but probably good at least here
