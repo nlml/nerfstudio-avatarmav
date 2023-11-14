@@ -55,6 +55,8 @@ class Field(nn.Module):
         """
         del times
         # Need to figure out a better way to describe positions with a ray.
+        if isinstance(positions, RaySamples):
+            return self.get_density(positions)[0]
         ray_samples = RaySamples(
             frustums=Frustums(
                 origins=positions,

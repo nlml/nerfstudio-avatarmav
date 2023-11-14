@@ -36,6 +36,7 @@ from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.fields.avatar_mav_field import AvatarMAVField
 from nerfstudio.fields.density_fields import HashMLPDensityField
 from nerfstudio.model_components.losses import (
+    L1Loss,
     MSELoss,
     distortion_loss,
     interlevel_loss,
@@ -63,16 +64,20 @@ class AvatarMAVModelConfig(ModelConfig):
     log2_hashmap_size: int = 19
     """Size of the hashmap for the base mlp"""
     num_proposal_samples_per_ray: Tuple[int, ...] = (256, 96)
+    # TODO(LS) to match AvatarMAV paper, this should be (64, )
     """Number of samples per ray for each proposal network."""
     num_nerf_samples_per_ray: int = 48
+    # TODO(LS) to match AvatarMAV paper, this should be 64
     """Number of samples per ray for the nerf network."""
     proposal_update_every: int = 5
     """Sample every n steps after the warmup"""
     proposal_warmup: int = 5000
     """Scales n from 1 to proposal_update_every over this many steps"""
     num_proposal_iterations: int = 2
+    # TODO(LS) to match AvatarMAV paper, this should be 1
     """Number of proposal network iterations."""
     use_same_proposal_network: bool = False
+    # TODO(LS) to match AvatarMAV paper, this should be True
     """Use the same proposal network. Otherwise use different ones."""
     proposal_net_args_list: List[Dict] = field(
         default_factory=lambda: [
@@ -107,6 +112,16 @@ class AvatarMAVModelConfig(ModelConfig):
     """Which implementation to use for the model."""
     camera_optimizer: CameraOptimizerConfig = CameraOptimizerConfig(mode="SO3xR3")
     """Config of the camera optimizer to use"""
+    use_avatarmav_field_as_proposal_network: bool = False
+    """Use the AvatarMAV field as the proposal network, per the original paper."""
+    offset_reg_loss: float = 0.0
+    """Penalisation for the norm of the offsets in the AvatarMAV field."""
+    headmodule_feature_res: int = 64
+    """Resolution of the feature grid in the head module of the AvatarMAV field."""
+    num_cameras_per_batch: int = 4
+    """Number of cameras per batch - this MUST BE the same as passed to the datamanager!"""
+    use_l1_loss: bool = False
+    """Use L1 loss instead of MSE loss for the RGB loss."""
 
 
 class AvatarMAVModel(Model):
@@ -132,6 +147,8 @@ class AvatarMAVModel(Model):
             self.scene_box.aabb,
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
+            headmodule_feature_res=self.config.headmodule_feature_res,
+            num_cameras_per_batch=self.config.num_cameras_per_batch,
         )
 
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
@@ -141,7 +158,11 @@ class AvatarMAVModel(Model):
         num_prop_nets = self.config.num_proposal_iterations
         # Build the proposal network(s)
         self.proposal_networks = torch.nn.ModuleList()
-        if self.config.use_same_proposal_network:
+        if self.config.use_avatarmav_field_as_proposal_network:
+            assert self.config.use_same_proposal_network
+            self.proposal_networks.append(self.field)
+            self.density_fns.append(self.field.density_fn)
+        elif self.config.use_same_proposal_network:
             assert len(self.config.proposal_net_args_list) == 1, "Only one proposal network is allowed."
             prop_net_args = self.config.proposal_net_args_list[0]
             network = HashMLPDensityField(
@@ -201,6 +222,8 @@ class AvatarMAVModel(Model):
 
         # losses
         self.rgb_loss = MSELoss()
+        if self.config.use_l1_loss:
+            self.rgb_loss = L1Loss()
         self.step = 0
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
@@ -276,6 +299,7 @@ class AvatarMAVModel(Model):
             "accumulation": accumulation,
             "depth": depth,
             "expected_depth": expected_depth,
+            "offsets": field_outputs[FieldHeadNames.OFFSET],
         }
 
         # These use a lot of GPU memory, so we avoid storing them for eval.
@@ -296,6 +320,7 @@ class AvatarMAVModel(Model):
 
         if self.training:
             metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+            metrics_dict["offsets_norm"] = outputs["offsets"].norm(dim=-1).mean()
 
         self.camera_optimizer.get_metrics_dict(metrics_dict)
         return metrics_dict
@@ -311,11 +336,13 @@ class AvatarMAVModel(Model):
 
         loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
         if self.training:
-            loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
-                outputs["weights_list"], outputs["ray_samples_list"]
-            )
+            if self.config.interlevel_loss_mult > 0:
+                loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
+                    outputs["weights_list"], outputs["ray_samples_list"]
+                )
             assert metrics_dict is not None and "distortion" in metrics_dict
             loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
+            loss_dict["offset_reg_loss"] = self.config.offset_reg_loss * metrics_dict["offsets_norm"]
 
             # Add loss from camera optimizer
             self.camera_optimizer.get_loss_dict(loss_dict)

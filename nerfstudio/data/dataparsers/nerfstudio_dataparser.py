@@ -315,22 +315,56 @@ class Nerfstudio(DataParser):
 
         flame_poses, flame_exps = [], []
         assert len(poses) == len(flame_param_fnames)
-        APPLY_FLAME_POSES_TO_CAMS = True  # TODO(LS): rm this later
+
+        APPLY_FLAME_POSES_TO_CAMS = False  # TODO(LS): rm this later
+        APPLY_NECK_ROT_TO_FLAME_POSE = False
+
         for i, flame_param_fname in enumerate(flame_param_fnames):
             fp = np.load(flame_param_fname)
-            flame_poses.append(np.concatenate([fp["rotation"], fp["translation"]], 1)[0])
+            # flame_poses.append(np.concatenate([fp["rotation"], fp["translation"]], 1)[0])
+            R = _so3_exp_map(torch.from_numpy(fp["rotation"]).float())[0]  # [3, 3]
+            T = torch.from_numpy(fp["translation"]).float().T  # [3, 1]
+
+            if APPLY_NECK_ROT_TO_FLAME_POSE:
+                neck_rot = _so3_exp_map(torch.from_numpy(fp["neck_pose"]).float())[0]
+                R = R @ neck_rot
+
+                verts, posed_joints, landmarks = self.flame(
+                    torch.tensor(fp["shape"][None, ...]).float(),
+                    torch.tensor(fp["expr"]).float(),
+                    torch.tensor(fp["rotation"]).float(),
+                    torch.tensor(fp["neck_pose"]).float(),
+                    torch.tensor(fp["jaw_pose"]).float(),
+                    torch.tensor(fp["eyes_pose"]).float(),
+                    torch.tensor(fp["translation"]).float(),
+                    return_landmarks=True,
+                )
+
+                neck_translation = posed_joints[:, 1]
+                T = neck_translation[..., None]
+                assert T.shape == (3, 1)
+
             if APPLY_FLAME_POSES_TO_CAMS:
-                flame_pose = flame_poses[-1]
-                R = torch.eye(4, dtype=torch.float32)
-                R[:3, :3] = _so3_exp_map(torch.from_numpy(flame_pose[:3]).unsqueeze(0))[0]
-                R[:3, 3] = torch.from_numpy(flame_pose[3:])
-                tmp = torch.eye(4, dtype=torch.float32)
-                tmp[:3] = poses[i]
-                R = torch.linalg.inv(R)
-                poses[i] = (R @ tmp)[:3]  # or should this be R @ tmp?
-                # poses[i] = (tmp @ R)[:3]  # or should this be R @ tmp?
-                flame_poses[-1] *= 0  # disable the flame pose
-            flame_exps.append(np.concatenate([fp["neck_pose"], fp["jaw_pose"], fp["expr"]], 1)[0])
+                Rflame = torch.eye(4, dtype=torch.float32)
+                Rflame[:3, :3] = R
+                Rflame[:3, 3:] = T
+                Rcam = torch.eye(4, dtype=torch.float32)
+                Rcam[:3] = poses[i]
+                Rflame[:3, :3] = Rflame[:3, :3].T
+                Rflame[:3, 3:] = -Rflame[:3, :3] @ T
+                poses[i] = (Rflame @ Rcam)[:3]
+
+                R = torch.eye(3, dtype=torch.float32)
+                T = torch.zeros(3, 1, dtype=torch.float32)
+
+            flame_pose = torch.cat([R, T], dim=1)
+            assert flame_pose.shape == (3, 4)
+            flame_poses.append(flame_pose.view(-1))
+
+            maybe_neck_pose = [] if APPLY_NECK_ROT_TO_FLAME_POSE else [fp["neck_pose"]]
+            expr_to_cat = maybe_neck_pose + [fp["jaw_pose"], fp["expr"]]
+            flame_exps.append(np.concatenate(expr_to_cat, 1)[0])
+
         flame_poses = torch.from_numpy(np.array(flame_poses).astype(np.float32))
         flame_exps = torch.from_numpy(np.array(flame_exps).astype(np.float32))
         print(split, flame_poses.shape)
