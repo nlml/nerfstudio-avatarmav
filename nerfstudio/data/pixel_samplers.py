@@ -40,6 +40,8 @@ class PixelSamplerConfig(InstantiateConfig):
     """Whether or not to include a reference to the full image in returned batch."""
     is_equirectangular: bool = False
     """List of whether or not camera i is equirectangular."""
+    num_cameras_per_batch: Optional[int] = None
+    """Used for AvatarMAV: sample from a fixed number of cameras per batch."""
 
 
 class PixelSampler:
@@ -58,9 +60,8 @@ class PixelSampler:
         self.config.num_rays_per_batch = self.kwargs.get("num_rays_per_batch", self.config.num_rays_per_batch)
         self.config.keep_full_image = self.kwargs.get("keep_full_image", self.config.keep_full_image)
         self.config.is_equirectangular = self.kwargs.get("is_equirectangular", self.config.is_equirectangular)
+        self.config.num_cameras_per_batch = self.kwargs.get("num_cameras_per_batch", self.config.num_cameras_per_batch)
         self.set_num_rays_per_batch(self.config.num_rays_per_batch)
-        # TODO(LS) make this disabled by default
-        self.num_unique_images_per_batch = 4
 
     def set_num_rays_per_batch(self, num_rays_per_batch: int):
         """Set the number of rays to sample per batch.
@@ -98,12 +99,12 @@ class PixelSampler:
                 torch.rand((batch_size, 3), device=device)
                 * torch.tensor([num_images, image_height, image_width], device=device)
             ).long()
-            if self.num_unique_images_per_batch is not None:
+            if self.config.num_cameras_per_batch is not None:
                 # Then we want to sample a fixed number of unique images per batch.
                 # We sample the same number of pixels for each image and stack them in order.
-                assert batch_size % self.num_unique_images_per_batch == 0
-                selected_images = torch.randperm(num_images)[: self.num_unique_images_per_batch].repeat_interleave(
-                    batch_size // self.num_unique_images_per_batch
+                assert batch_size % self.config.num_cameras_per_batch == 0
+                selected_images = torch.randperm(num_images)[: self.config.num_cameras_per_batch].repeat_interleave(
+                    batch_size // self.config.num_cameras_per_batch
                 )
                 indices[:, 0] = selected_images
 

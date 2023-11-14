@@ -17,8 +17,10 @@ Field for compound nerf model, adds scene contraction and image embeddings to in
 """
 
 
+import os
 from typing import Dict, Literal, Optional, Tuple
 
+import numpy as np
 import torch
 from einops import rearrange
 from torch import Tensor
@@ -120,7 +122,7 @@ class HeadModule(nn.Module):
         self,
         exp_dim=32,
         feature_dim=4,
-        feature_res=128,
+        feature_res=64,
         deform_bs_res=32,
         deform_bs_dim=2,
         deform_linear_dims=[54, 128, 3],
@@ -132,7 +134,6 @@ class HeadModule(nn.Module):
         feature_bbox=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
         noise=0.0,
         deform_scale=0.1,
-        invert_pose=False,
     ):
         super(HeadModule, self).__init__()
         self.exp_dim = exp_dim
@@ -149,7 +150,6 @@ class HeadModule(nn.Module):
         self.feature_bbox = feature_bbox
         self.noise = noise
         self.deform_scale = deform_scale
-        self.invert_pose = invert_pose
 
         self.deform_bs_volume = nn.Parameter(
             torch.zeros(
@@ -180,20 +180,27 @@ class HeadModule(nn.Module):
         # TODO(LS): re-enable viewdir dependence!
         self.view_embedding, self.view_out_dim = get_embedder(self.embedding_freq, disable_viewdir_dependence=True)
 
-        self.default_pose = torch.zeros([1, 6])
-
     def _rot_trans_from_pose(self, pose):
         R = _so3_exp_map(pose[:, :3])
         T = pose[:, 3:, None]
-        if self.invert_pose:
-            R = R.permute(0, 2, 1)
-            T = -torch.bmm(R, T)
         return R, T
 
     def density(self, query_pts, exp, pose=None, scale=None):
-        # positions = rearrange(positions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
-        # exp = rearrange(exp, "(n rays) expdim -> n expdim rays", n=self.num_cameras_per_batch)
+        """
+        Compute density values for query points.
 
+        Args:
+            query_pts: A tensor of shape `(num_cameras, 3, num_rays_per_camera * num_samples)`
+                containing the 3D points to query the density at.
+            exp: A tensor of shape `(num_cameras, exp_dim)` containing the expression parameters.
+            pose: A tensor of shape `(num_cameras, 6)` containing the camera pose offset parameters.
+                These are in axis-angle format of [rx, ry, rz, tx, ty, tz].
+            scale: A tensor of shape `(num_cameras, 1)` containing the camera scale offset parameters.
+
+        Returns:
+            A tensor of shape `(num_cameras, 1, num_rays_per_camera * num_samples)` containing
+            the density values for the query points.
+        """
         B, C, N = query_pts.shape
         if pose is not None:
             R, T = self._rot_trans_from_pose(pose)
@@ -229,6 +236,21 @@ class HeadModule(nn.Module):
         return density_first_then_feature_embedding
 
     def color(self, feature_embedding, query_viewdirs, exp, pose=None):
+        """
+        Compute rgb color values given feature embedding and query viewdirs.
+
+        Args:
+            feature_embedding: A tensor of shape `(num_cameras, feature_dim, num_rays_per_camera * num_samples)`
+                containing the feature embedding at each sample point.
+            query_viewdirs: A tensor of shape `(num_cameras, 3, num_rays_per_camera * num_samples)`
+                containing the viewing directions for each ray, repeated over samples.
+            exp: A tensor of shape `(num_cameras, exp_dim)` containing the expression parameters.
+            pose: A tensor of shape `(num_cameras, 6)` containing the camera pose offset parameters.
+
+        Returns:
+            A tensor of shape `(num_cameras, 3, num_rays_per_camera * num_samples)` containing
+                the rgb color values at the feature/viewdir/expression combination.
+        """
         # feature_embedding should have shape [nCams, featureDim, nRays * nSamples]
         # query_viewdirs should have shape [nCams, 3, nRays * nSamples]
         # exp should have shape [nCams, expDim]
@@ -272,11 +294,6 @@ class HeadModule(nn.Module):
         feature = torch.cat(feature_list, dim=1)
         return feature
 
-    def forward(self, data, forward_type="query"):
-        if forward_type == "query":
-            data = self.query(data)
-        return data
-
 
 class AvatarMAVField(Field):
     """Compound Field that uses TCNN
@@ -302,7 +319,7 @@ class AvatarMAVField(Field):
 
         self.register_buffer("aabb", aabb)
         self.geo_feat_dim = geo_feat_dim
-        self.num_cameras_per_batch = num_cameras_per_batch
+        self._num_cameras_per_batch = num_cameras_per_batch
 
         self.spatial_distortion = spatial_distortion
         self.num_images = num_images
@@ -310,7 +327,61 @@ class AvatarMAVField(Field):
 
         self.headmodule = HeadModule()
 
-        self.default_expression = torch.zeros([1, self.headmodule.exp_dim])
+        # self.flame_exp_codes_per_cam = torch.zeros((self.num_images, self.headmodule.exp_dim), device="cuda")
+        # self.flame_pose_codes_per_cam = torch.zeros((self.num_images, 6), device="cuda")
+
+    @property
+    def num_cameras_per_batch(self):
+        if self.training:
+            return self._num_cameras_per_batch
+        else:
+            return 1
+
+    def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
+        if "flame_exps" in ray_samples.metadata:
+            exp = ray_samples.metadata["flame_exps"][::n_rays_per_camera, 0]
+        else:
+            exp = torch.zeros(
+                (self.num_cameras_per_batch, self.headmodule.exp_dim), device=ray_samples.frustums.directions.device
+            )
+        if not self.training and os.path.exists("/tmp/exp.npy"):
+            exp = (
+                torch.from_numpy(np.load("/tmp/exp.npy"))
+                .view(1, -1)
+                .repeat(self.num_cameras_per_batch, 1)
+                .to(ray_samples.frustums.directions.device)
+            )
+        if "flame_poses" in ray_samples.metadata:
+            pose = ray_samples.metadata["flame_poses"]  # has shape [n_rays, n_samples, 6]
+            pose = pose[::n_rays_per_camera, 0]
+        else:
+            pose = torch.zeros((self.num_cameras_per_batch, 6), device=ray_samples.frustums.directions.device)
+        if not self.training and os.path.exists("/tmp/pose.npy"):
+            pose = (
+                torch.from_numpy(np.load("/tmp/pose.npy"))
+                .view(1, -1)[:, : self.headmodule.exp_dim]
+                .repeat(self.num_cameras_per_batch, 1)
+                .to(ray_samples.frustums.directions.device)
+            )
+        return exp, pose
+
+    # def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
+    #     cam_indices_one_per_cam = ray_samples.camera_indices[::n_rays_per_camera, 0, 0]
+
+    #     self.flame_exp_codes_per_cam = self.flame_exp_codes_per_cam.to(ray_samples.frustums.directions.device)
+    #     self.flame_pose_codes_per_cam = self.flame_pose_codes_per_cam.to(ray_samples.frustums.directions.device)
+
+    #     exp = self.flame_exp_codes_per_cam[cam_indices_one_per_cam]
+    #     pose = self.flame_pose_codes_per_cam[cam_indices_one_per_cam]
+
+    #     if not self.training and os.path.exists("/tmp/pose.npy"):
+    #         pose = (
+    #             torch.from_numpy(np.load("/tmp/pose.npy"))
+    #             .view(1, 6)
+    #             .repeat(cam_indices_one_per_cam.shape[0], 1)
+    #             .to(ray_samples.frustums.directions.device)
+    #         )
+    #     return exp, pose
 
     def get_density(self, ray_samples: RaySamples) -> Tuple[Tensor, Tensor]:
         """Computes and returns the densities."""
@@ -335,14 +406,12 @@ class AvatarMAVField(Field):
             assert (subset[0] == subset).all()
 
         positions = rearrange(positions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
-        self.default_expression = self.default_expression.to(positions.device)
 
-        # TODO(LS): need to get exp from camera info
-        exp = self.default_expression.repeat(self.num_cameras_per_batch, 1)
+        exp, pose = self.get_exp_pose(ray_samples, n_rays_per_camera)
 
         # Positions going in should have shape [nCams, 3, (nRays * nSamples)]
         # Exp going in should have shape [nCams, expDim]
-        h = self.headmodule.density(positions, exp)
+        h = self.headmodule.density(positions, exp, pose)
         h = rearrange(h, "(rays samples) dim -> rays samples dim", rays=n_rays)
 
         density_before_activation, base_mlp_out = torch.split(h, [1, self.geo_feat_dim], dim=-1)
@@ -366,11 +435,8 @@ class AvatarMAVField(Field):
         directions = get_normalized_directions(ray_samples.frustums.directions)
         # positions.shape = (num_rays, num_samples, 3)
 
-        outputs_shape = ray_samples.frustums.directions.shape[:-1]
-
-        self.default_expression = self.default_expression.to(directions.device)
-        # TODO(LS): need to get exp from camera info
-        exp = self.default_expression.repeat(self.num_cameras_per_batch, 1)
+        n_rays = ray_samples.frustums.directions.shape[0]
+        n_rays_per_camera = n_rays // self.num_cameras_per_batch
 
         # density_embedding should have shape [nCams, featureDim, nRays * nSamples]
         density_embedding = rearrange(
@@ -380,7 +446,8 @@ class AvatarMAVField(Field):
         viewdirs = rearrange(directions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
         # exp should have shape [nCams, expDim]
 
-        rgb = self.headmodule.color(density_embedding, viewdirs, exp)
+        exp, pose = self.get_exp_pose(ray_samples, n_rays_per_camera)
+        rgb = self.headmodule.color(density_embedding, viewdirs, exp, pose)
         rgb = rearrange(rgb, "n c (rays samples) -> (n rays) samples c", samples=directions.shape[1])
         outputs.update({FieldHeadNames.RGB: rgb})
 

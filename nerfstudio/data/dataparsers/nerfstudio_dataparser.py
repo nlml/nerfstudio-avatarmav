@@ -28,11 +28,12 @@ from nerfstudio.cameras.cameras import CAMERA_MODEL_TO_TYPE, Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig, DataparserOutputs
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.data.utils.dataparsers_utils import (
+    get_train_eval_split_all,
     get_train_eval_split_filename,
     get_train_eval_split_fraction,
     get_train_eval_split_interval,
-    get_train_eval_split_all,
 )
+from nerfstudio.fields.avatar_mav_field import _so3_exp_map
 from nerfstudio.utils.io import load_from_json
 from nerfstudio.utils.rich_utils import CONSOLE
 
@@ -95,6 +96,9 @@ class Nerfstudio(DataParser):
         image_filenames = []
         mask_filenames = []
         depth_filenames = []
+        fg_mask_fnames = []
+        flame_param_fnames = []
+
         poses = []
 
         fx_fixed = "fl_x" in meta
@@ -175,6 +179,16 @@ class Nerfstudio(DataParser):
                 depth_fname = self._get_fname(depth_filepath, data_dir, downsample_folder_prefix="depths_")
                 depth_filenames.append(depth_fname)
 
+            if "fg_mask_path" in frame:
+                fg_mask_filepath = Path(frame["fg_mask_path"])
+                fg_mask_fname = self._get_fname(fg_mask_filepath, data_dir)
+                fg_mask_fnames.append(fg_mask_fname)
+
+            if "flame_param_path" in frame:
+                flame_param_filepath = Path(frame["flame_param_path"])
+                flame_param_fname = self._get_fname(flame_param_filepath, data_dir)
+                flame_param_fnames.append(flame_param_fname)
+
         assert len(mask_filenames) == 0 or (
             len(mask_filenames) == len(image_filenames)
         ), """
@@ -186,6 +200,18 @@ class Nerfstudio(DataParser):
         ), """
         Different number of image and depth filenames.
         You should check that depth_file_path is specified for every frame (or zero frames) in transforms.json.
+        """
+        assert len(fg_mask_fnames) == 0 or (
+            len(fg_mask_fnames) == len(image_filenames)
+        ), """
+        Different number of image and fg mask filenames.
+        You should check that fg_mask_path is specified for every frame (or zero frames) in transforms.json.
+        """
+        assert len(flame_param_fnames) == 0 or (
+            len(flame_param_fnames) == len(image_filenames)
+        ), """
+        Different number of image and flame param filenames.
+        You should check that flame_param_path is specified for every frame (or zero frames) in transforms.json.
         """
 
         has_split_files_spec = any(f"{split}_filenames" in meta for split in ("train", "val", "test"))
@@ -249,6 +275,8 @@ class Nerfstudio(DataParser):
         image_filenames = [image_filenames[i] for i in indices]
         mask_filenames = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
         depth_filenames = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
+        fg_mask_fnames = [fg_mask_fnames[i] for i in indices] if len(fg_mask_fnames) > 0 else []
+        flame_param_fnames = [flame_param_fnames[i] for i in indices] if len(flame_param_fnames) > 0 else []
 
         idx_tensor = torch.tensor(indices, dtype=torch.long)
         poses = poses[idx_tensor]
@@ -285,6 +313,30 @@ class Nerfstudio(DataParser):
         else:
             distortion_params = torch.stack(distort, dim=0)[idx_tensor]
 
+        flame_poses, flame_exps = [], []
+        assert len(poses) == len(flame_param_fnames)
+        APPLY_FLAME_POSES_TO_CAMS = True  # TODO(LS): rm this later
+        for i, flame_param_fname in enumerate(flame_param_fnames):
+            fp = np.load(flame_param_fname)
+            flame_poses.append(np.concatenate([fp["rotation"], fp["translation"]], 1)[0])
+            if APPLY_FLAME_POSES_TO_CAMS:
+                flame_pose = flame_poses[-1]
+                R = torch.eye(4, dtype=torch.float32)
+                R[:3, :3] = _so3_exp_map(torch.from_numpy(flame_pose[:3]).unsqueeze(0))[0]
+                R[:3, 3] = torch.from_numpy(flame_pose[3:])
+                tmp = torch.eye(4, dtype=torch.float32)
+                tmp[:3] = poses[i]
+                R = torch.linalg.inv(R)
+                poses[i] = (R @ tmp)[:3]  # or should this be R @ tmp?
+                # poses[i] = (tmp @ R)[:3]  # or should this be R @ tmp?
+                flame_poses[-1] *= 0  # disable the flame pose
+            flame_exps.append(np.concatenate([fp["neck_pose"], fp["jaw_pose"], fp["expr"]], 1)[0])
+        flame_poses = torch.from_numpy(np.array(flame_poses).astype(np.float32))
+        flame_exps = torch.from_numpy(np.array(flame_exps).astype(np.float32))
+        print(split, flame_poses.shape)
+        print(split, flame_exps.shape)
+        print("APPLY_FLAME_POSES_TO_CAMS", APPLY_FLAME_POSES_TO_CAMS)
+
         cameras = Cameras(
             fx=fx,
             fy=fy,
@@ -295,6 +347,10 @@ class Nerfstudio(DataParser):
             width=width,
             camera_to_worlds=poses[:, :3, :4],
             camera_type=camera_type,
+            metadata={
+                "flame_poses": flame_poses,
+                "flame_exps": flame_exps,
+            },
         )
 
         assert self.downscale_factor is not None

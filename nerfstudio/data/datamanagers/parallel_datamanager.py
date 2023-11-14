@@ -22,16 +22,7 @@ import queue
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import (
-    Dict,
-    Generic,
-    List,
-    Literal,
-    Optional,
-    Tuple,
-    Type,
-    Union,
-)
+from typing import Dict, Generic, List, Literal, Optional, Tuple, Type, Union
 
 import torch
 import torch.multiprocessing as mp
@@ -42,21 +33,13 @@ from nerfstudio.cameras.cameras import CameraType
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.data.datamanagers.base_datamanager import (
     DataManager,
-    VanillaDataManagerConfig,
     TDataset,
+    VanillaDataManagerConfig,
     variable_res_collate,
 )
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
-from nerfstudio.data.pixel_samplers import (
-    PixelSampler,
-    PixelSamplerConfig,
-    PatchPixelSamplerConfig,
-)
-from nerfstudio.data.utils.dataloaders import (
-    CacheDataloader,
-    FixedIndicesEvalDataloader,
-    RandIndicesEvalDataloader,
-)
+from nerfstudio.data.pixel_samplers import PatchPixelSamplerConfig, PixelSampler, PixelSamplerConfig
+from nerfstudio.data.utils.dataloaders import CacheDataloader, FixedIndicesEvalDataloader, RandIndicesEvalDataloader
 from nerfstudio.model_components.ray_generators import RayGenerator
 from nerfstudio.utils.rich_utils import CONSOLE
 
@@ -74,6 +57,8 @@ class ParallelDataManagerConfig(VanillaDataManagerConfig):
     If queue_size <= 0, the queue size is infinite."""
     max_thread_workers: Optional[int] = None
     """Maximum number of threads to use in thread pool executor. If None, use ThreadPool default."""
+    train_num_cameras_per_batch: Optional[int] = None
+    """Fix the number of cameras per batch (used for AvatarMAV)"""
 
 
 class DataProcessor(mp.Process):
@@ -206,7 +191,9 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
             scale_factor=self.config.camera_res_scale_factor,
         )
 
-    def _get_pixel_sampler(self, dataset: TDataset, num_rays_per_batch: int) -> PixelSampler:
+    def _get_pixel_sampler(
+        self, dataset: TDataset, num_rays_per_batch: int, num_cameras_per_batch: Optional[int] = None
+    ) -> PixelSampler:
         """Infer pixel sampler to use."""
         if self.config.patch_size > 1 and type(self.config.pixel_sampler) is PixelSamplerConfig:
             return PatchPixelSamplerConfig().setup(
@@ -216,13 +203,17 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
         if is_equirectangular.any():
             CONSOLE.print("[bold yellow]Warning: Some cameras are equirectangular, but using default pixel sampler.")
         return self.config.pixel_sampler.setup(
-            is_equirectangular=is_equirectangular, num_rays_per_batch=num_rays_per_batch
+            is_equirectangular=is_equirectangular,
+            num_rays_per_batch=num_rays_per_batch,
+            num_cameras_per_batch=num_cameras_per_batch,
         )
 
     def setup_train(self):
         """Sets up parallel python data processes for training."""
         assert self.train_dataset is not None
-        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)  # type: ignore
+        self.train_pixel_sampler = self._get_pixel_sampler(
+            self.train_dataset, self.config.train_num_rays_per_batch, self.config.train_num_cameras_per_batch
+        )
         self.data_queue = mp.Manager().Queue(maxsize=self.config.queue_size)
         self.data_procs = [
             DataProcessor(
@@ -257,7 +248,11 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
             exclude_batch_keys_from_device=self.exclude_batch_keys_from_device,
         )
         self.iter_eval_image_dataloader = iter(self.eval_image_dataloader)
-        self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch)  # type: ignore
+        num_cameras_per_batch = None
+        if self.config.train_num_cameras_per_batch is not None:
+            num_cameras_per_batch = None  # len(self.eval_dataset.cameras)
+            print("self.config.eval_num_images_to_sample_from", self.config.eval_num_images_to_sample_from)
+        self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch, num_cameras_per_batch=num_cameras_per_batch)  # type: ignore
         self.eval_ray_generator = RayGenerator(self.eval_dataset.cameras.to(self.device))
         # for loading full images
         self.fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-NeRF implementation that combines many recent advancements.
+Port of AvatarMAV to NeRFStudio
 """
 
 from __future__ import annotations
@@ -39,8 +39,6 @@ from nerfstudio.model_components.losses import (
     MSELoss,
     distortion_loss,
     interlevel_loss,
-    orientation_loss,
-    pred_normal_loss,
     scale_gradients_by_distance_squared,
 )
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
@@ -345,7 +343,8 @@ class AvatarMAVModel(Model):
 
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
-        lpips = self.lpips(gt_rgb, predicted_rgb)
+        # TODO(LS): fix segfault with lpips
+        lpips = ssim  # self.lpips(gt_rgb, predicted_rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
