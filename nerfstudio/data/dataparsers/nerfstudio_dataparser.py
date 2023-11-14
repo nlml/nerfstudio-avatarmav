@@ -316,14 +316,13 @@ class Nerfstudio(DataParser):
         flame_poses, flame_exps = [], []
         assert len(poses) == len(flame_param_fnames)
 
-        APPLY_FLAME_POSES_TO_CAMS = False  # TODO(LS): rm this later
+        APPLY_FLAME_POSES_TO_CAMS = True  # TODO(LS): rm this later
         APPLY_NECK_ROT_TO_FLAME_POSE = False
 
         for i, flame_param_fname in enumerate(flame_param_fnames):
             fp = np.load(flame_param_fname)
-            # flame_poses.append(np.concatenate([fp["rotation"], fp["translation"]], 1)[0])
             R = _so3_exp_map(torch.from_numpy(fp["rotation"]).float())[0]  # [3, 3]
-            T = torch.from_numpy(fp["translation"]).float().T  # [3, 1]
+            T = torch.from_numpy(fp["translation"]).float()[0]  # [3,]
 
             if APPLY_NECK_ROT_TO_FLAME_POSE:
                 neck_rot = _so3_exp_map(torch.from_numpy(fp["neck_pose"]).float())[0]
@@ -341,25 +340,24 @@ class Nerfstudio(DataParser):
                 )
 
                 neck_translation = posed_joints[:, 1]
-                T = neck_translation[..., None]
-                assert T.shape == (3, 1)
+                T = neck_translation[...]
+                assert T.shape == (3)
 
             if APPLY_FLAME_POSES_TO_CAMS:
-                Rflame = torch.eye(4, dtype=torch.float32)
-                Rflame[:3, :3] = R
-                Rflame[:3, 3:] = T
+                # Compute inverse flame pose
+                Rflameinv = torch.eye(4, dtype=torch.float32)
+                Rflameinv[:3, :3] = R.T
+                Rflameinv[:3, 3] = -Rflameinv[:3, :3] @ T
+                # Shift the camera by the inverse flame pose
                 Rcam = torch.eye(4, dtype=torch.float32)
                 Rcam[:3] = poses[i]
-                Rflame[:3, :3] = Rflame[:3, :3].T
-                Rflame[:3, 3:] = -Rflame[:3, :3] @ T
-                poses[i] = (Rflame @ Rcam)[:3]
-
+                poses[i] = (Rflameinv @ Rcam)[:3]
+                # Set the flame pose to identity since it has been applied to the camera
                 R = torch.eye(3, dtype=torch.float32)
                 T = torch.zeros(3, 1, dtype=torch.float32)
 
-            flame_pose = torch.cat([R, T], dim=1)
-            assert flame_pose.shape == (3, 4)
-            flame_poses.append(flame_pose.view(-1))
+            flame_pose = torch.cat([R.view(-1), T.view(-1)])
+            flame_poses.append(flame_pose)
 
             maybe_neck_pose = [] if APPLY_NECK_ROT_TO_FLAME_POSE else [fp["neck_pose"]]
             expr_to_cat = maybe_neck_pose + [fp["jaw_pose"], fp["expr"]]

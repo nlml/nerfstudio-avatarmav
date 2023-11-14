@@ -181,11 +181,11 @@ class HeadModule(nn.Module):
         self.view_embedding, self.view_out_dim = get_embedder(self.embedding_freq, disable_viewdir_dependence=True)
 
     def _rot_trans_from_pose(self, pose):
-        R = pose.view(-1, 3, 4)
-        T = R[:, :, 3:]
-        R = R[:, :, :3]
-        # R = _so3_exp_map(pose[:, :3])
-        # T = pose[:, 3:, None]
+        # Pose coming in should be shape [n, 12]
+        # Last 3 elements are translation
+        T = pose[:, -3:, None]
+        # First 9 elements are rotation matrix
+        R = pose[:, :-3].view(-1, 3, 3)
         return R, T
 
     def density(self, query_pts, exp, pose=None, scale=None):
@@ -357,8 +357,9 @@ class AvatarMAVField(Field):
                     .repeat(self.num_cameras_per_batch, 1)
                     .to(ray_samples.frustums.directions.device)
                 )
-            except:
-                pass
+            except Exception as e:
+                print("Error in loading expression!")
+                print(e)
         if ray_samples.metadata is not None and "flame_poses" in ray_samples.metadata:
             pose = ray_samples.metadata["flame_poses"]  # has shape [n_rays, n_samples, 6]
             pose = pose[::n_rays_per_camera, 0]
@@ -368,13 +369,14 @@ class AvatarMAVField(Field):
             try:
                 pose = torch.from_numpy(np.load("/tmp/pose.npy")).view(1, -1)
                 if pose.shape[1] == 6:  # axis-angle
-                    R = _so3_exp_map(pose[:, :3])  # 1, 3, 3
-                    T = pose[:, 3:, None]  # 1, 3, 1
-                    Rt = torch.cat([R, T], dim=2)  # 1, 3, 4
-                    pose = Rt.view(1, 12)
+                    R = _so3_exp_map(pose[:, :3])
+                    T = pose[:, 3:, None]
+                    Rt = torch.cat([R.view(-1), T.view(-1)])
+                    pose = Rt.view(1, -1)
                 pose = pose.repeat(self.num_cameras_per_batch, 1).to(ray_samples.frustums.directions.device)
-            except:
-                pass
+            except Exception as e:
+                print("Error in loading pose!")
+                print(e)
         return exp, pose
 
     # def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
