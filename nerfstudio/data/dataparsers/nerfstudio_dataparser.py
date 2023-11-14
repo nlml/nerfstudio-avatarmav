@@ -74,6 +74,10 @@ class NerfstudioDataParserConfig(DataParserConfig):
     """The interval between frames to use for eval. Only used when eval_mode is eval-interval."""
     depth_unit_scale_factor: float = 1e-3
     """Scales the depth values to meters. Default value is 0.001 for a millimeter to meter conversion."""
+    apply_flame_poses_to_cams: bool = False
+    """If True, FLAME poses will be added to camera poses, and zero pose will be passed to ray deformation."""
+    apply_neck_rot_to_flame_pose: bool = False
+    """If True, neck rotation will be applied to the flame pose, instead of being passed to deformation field."""
 
 
 @dataclass
@@ -316,15 +320,12 @@ class Nerfstudio(DataParser):
         flame_poses, flame_exps = [], []
         assert len(poses) == len(flame_param_fnames)
 
-        APPLY_FLAME_POSES_TO_CAMS = True  # TODO(LS): rm this later
-        APPLY_NECK_ROT_TO_FLAME_POSE = False
-
         for i, flame_param_fname in enumerate(flame_param_fnames):
             fp = np.load(flame_param_fname)
             R = _so3_exp_map(torch.from_numpy(fp["rotation"]).float())[0]  # [3, 3]
             T = torch.from_numpy(fp["translation"]).float()[0]  # [3,]
 
-            if APPLY_NECK_ROT_TO_FLAME_POSE:
+            if self.config.apply_neck_rot_to_flame_pose:
                 neck_rot = _so3_exp_map(torch.from_numpy(fp["neck_pose"]).float())[0]
                 R = R @ neck_rot
 
@@ -343,7 +344,7 @@ class Nerfstudio(DataParser):
                 T = neck_translation[...]
                 assert T.shape == (3)
 
-            if APPLY_FLAME_POSES_TO_CAMS:
+            if self.config.apply_flame_poses_to_cams:
                 # Compute inverse flame pose
                 Rflameinv = torch.eye(4, dtype=torch.float32)
                 Rflameinv[:3, :3] = R.T
@@ -359,7 +360,7 @@ class Nerfstudio(DataParser):
             flame_pose = torch.cat([R.view(-1), T.view(-1)])
             flame_poses.append(flame_pose)
 
-            maybe_neck_pose = [] if APPLY_NECK_ROT_TO_FLAME_POSE else [fp["neck_pose"]]
+            maybe_neck_pose = [] if self.config.apply_neck_rot_to_flame_pose else [fp["neck_pose"]]
             expr_to_cat = maybe_neck_pose + [fp["jaw_pose"], fp["expr"]]
             flame_exps.append(np.concatenate(expr_to_cat, 1)[0])
 
@@ -367,7 +368,6 @@ class Nerfstudio(DataParser):
         flame_exps = torch.from_numpy(np.array(flame_exps).astype(np.float32))
         print(split, flame_poses.shape)
         print(split, flame_exps.shape)
-        print("APPLY_FLAME_POSES_TO_CAMS", APPLY_FLAME_POSES_TO_CAMS)
 
         cameras = Cameras(
             fx=fx,
