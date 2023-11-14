@@ -181,8 +181,15 @@ class HeadModule(nn.Module):
         self.view_embedding, self.view_out_dim = get_embedder(self.embedding_freq, disable_viewdir_dependence=True)
 
     def _rot_trans_from_pose(self, pose):
-        R = _so3_exp_map(pose[:, :3])
-        T = pose[:, 3:, None]
+        if self.training:
+            R = _so3_exp_map(pose[:, :3])
+            T = pose[:, 3:, None]
+        else:
+            R = pose.view(-1, 3, 4)
+            T = R[:, :, 3:]
+            R = R[:, :, :3]
+        # R = _so3_exp_map(pose[:, :3])
+        # T = pose[:, 3:, None]
         return R, T
 
     def density(self, query_pts, exp, pose=None, scale=None):
@@ -233,7 +240,7 @@ class HeadModule(nn.Module):
         if self.training and self.noise > 0.0:
             density = density + torch.randn_like(density) * self.noise
         density_first_then_feature_embedding = torch.cat([density, feature_embedding], 1)
-        return density_first_then_feature_embedding
+        return density_first_then_feature_embedding, offset
 
     def color(self, feature_embedding, query_viewdirs, exp, pose=None):
         """
@@ -314,6 +321,7 @@ class AvatarMAVField(Field):
         geo_feat_dim: int = 108,
         spatial_distortion: Optional[SpatialDistortion] = None,
         num_cameras_per_batch: int = 4,
+        headmodule_feature_res: int = 64,
     ) -> None:
         super().__init__()
 
@@ -325,7 +333,7 @@ class AvatarMAVField(Field):
         self.num_images = num_images
         self.step = 0
 
-        self.headmodule = HeadModule()
+        self.headmodule = HeadModule(feature_res=headmodule_feature_res)
 
         # self.flame_exp_codes_per_cam = torch.zeros((self.num_images, self.headmodule.exp_dim), device="cuda")
         # self.flame_pose_codes_per_cam = torch.zeros((self.num_images, 6), device="cuda")
@@ -338,31 +346,39 @@ class AvatarMAVField(Field):
             return 1
 
     def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
-        if "flame_exps" in ray_samples.metadata:
+        if ray_samples.metadata is not None and "flame_exps" in ray_samples.metadata:
             exp = ray_samples.metadata["flame_exps"][::n_rays_per_camera, 0]
         else:
+            assert not self.training, "flame_exps must be provided during training"
             exp = torch.zeros(
                 (self.num_cameras_per_batch, self.headmodule.exp_dim), device=ray_samples.frustums.directions.device
             )
         if not self.training and os.path.exists("/tmp/exp.npy"):
-            exp = (
-                torch.from_numpy(np.load("/tmp/exp.npy"))
-                .view(1, -1)
-                .repeat(self.num_cameras_per_batch, 1)
-                .to(ray_samples.frustums.directions.device)
-            )
-        if "flame_poses" in ray_samples.metadata:
+            try:
+                exp = (
+                    torch.from_numpy(np.load("/tmp/exp.npy"))
+                    .view(1, -1)
+                    .repeat(self.num_cameras_per_batch, 1)
+                    .to(ray_samples.frustums.directions.device)
+                )
+            except:
+                pass
+        if ray_samples.metadata is not None and "flame_poses" in ray_samples.metadata:
             pose = ray_samples.metadata["flame_poses"]  # has shape [n_rays, n_samples, 6]
             pose = pose[::n_rays_per_camera, 0]
         else:
             pose = torch.zeros((self.num_cameras_per_batch, 6), device=ray_samples.frustums.directions.device)
         if not self.training and os.path.exists("/tmp/pose.npy"):
-            pose = (
-                torch.from_numpy(np.load("/tmp/pose.npy"))
-                .view(1, -1)[:, : self.headmodule.exp_dim]
-                .repeat(self.num_cameras_per_batch, 1)
-                .to(ray_samples.frustums.directions.device)
-            )
+            try:
+                pose = torch.from_numpy(np.load("/tmp/pose.npy")).view(1, -1)
+                if pose.shape[1] == 6:  # axis-angle
+                    R = _so3_exp_map(pose[:, :3])  # 1, 3, 3
+                    T = pose[:, 3:, None]  # 1, 3, 1
+                    Rt = torch.cat([R, T], dim=2)  # 1, 3, 4
+                    pose = Rt.view(1, 12)
+                pose = pose.repeat(self.num_cameras_per_batch, 1).to(ray_samples.frustums.directions.device)
+            except:
+                pass
         return exp, pose
 
     # def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
@@ -383,7 +399,7 @@ class AvatarMAVField(Field):
     #         )
     #     return exp, pose
 
-    def get_density(self, ray_samples: RaySamples) -> Tuple[Tensor, Tensor]:
+    def get_density(self, ray_samples: RaySamples, return_offsets: Optional[bool] = False) -> Tuple[Tensor, Tensor]:
         """Computes and returns the densities."""
         if self.spatial_distortion is not None:
             positions = ray_samples.frustums.get_positions()
@@ -400,10 +416,13 @@ class AvatarMAVField(Field):
 
         n_rays = positions.shape[0]
         n_rays_per_camera = n_rays // self.num_cameras_per_batch
-        for i in range(self.num_cameras_per_batch):
-            # TODO(LS): can delete this sanity check later
-            subset = ray_samples.camera_indices[n_rays_per_camera * i : n_rays_per_camera * (i + 1), :, 0].reshape(-1)
-            assert (subset[0] == subset).all()
+        if ray_samples.camera_indices is not None:
+            for i in range(self.num_cameras_per_batch):
+                # TODO(LS): can delete this sanity check later
+                subset = ray_samples.camera_indices[n_rays_per_camera * i : n_rays_per_camera * (i + 1), :, 0].reshape(
+                    -1
+                )
+                assert (subset[0] == subset).all()
 
         positions = rearrange(positions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
 
@@ -411,8 +430,13 @@ class AvatarMAVField(Field):
 
         # Positions going in should have shape [nCams, 3, (nRays * nSamples)]
         # Exp going in should have shape [nCams, expDim]
-        h = self.headmodule.density(positions, exp, pose)
+        h, offset = self.headmodule.density(positions, exp, pose)
         h = rearrange(h, "(rays samples) dim -> rays samples dim", rays=n_rays)
+        offset = rearrange(
+            offset,
+            "ncams dim (raysPerCam samplesPerRay) -> (ncams raysPerCam) samplesPerRay dim",
+            raysPerCam=n_rays_per_camera,
+        )
 
         density_before_activation, base_mlp_out = torch.split(h, [1, self.geo_feat_dim], dim=-1)
         self._density_before_activation = density_before_activation
@@ -422,7 +446,10 @@ class AvatarMAVField(Field):
         # from smaller internal (float16) parameters.
         density = trunc_exp(density_before_activation.to(positions))
         density = density * selector[..., None]
-        return density, base_mlp_out
+        if return_offsets:
+            return density, base_mlp_out, offset
+        else:
+            return density, base_mlp_out
 
     def get_outputs(
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
@@ -452,3 +479,25 @@ class AvatarMAVField(Field):
         outputs.update({FieldHeadNames.RGB: rgb})
 
         return outputs
+
+    def forward(self, ray_samples: RaySamples, compute_normals: bool = False) -> Dict[FieldHeadNames, Tensor]:
+        """Evaluates the field at points along the ray.
+
+        Args:
+            ray_samples: Samples to evaluate field on.
+        """
+        if compute_normals:
+            with torch.enable_grad():
+                density, density_embedding = self.get_density(ray_samples)
+        else:
+            density, density_embedding, offset = self.get_density(ray_samples, return_offsets=True)
+
+        field_outputs = self.get_outputs(ray_samples, density_embedding=density_embedding)
+        field_outputs[FieldHeadNames.DENSITY] = density  # type: ignore
+        field_outputs[FieldHeadNames.OFFSET] = offset  # type: ignore
+
+        if compute_normals:
+            with torch.enable_grad():
+                normals = self.get_normals()
+            field_outputs[FieldHeadNames.NORMALS] = normals  # type: ignore
+        return field_outputs
