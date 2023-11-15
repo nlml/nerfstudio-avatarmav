@@ -134,7 +134,7 @@ class HeadModule(nn.Module):
         feature_bbox=[[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]],
         noise=0.0,
         deform_scale=0.1,
-        disable_viewdir_dependence=True,
+        viewdir_dependence=True,
     ):
         super(HeadModule, self).__init__()
         self.exp_dim = exp_dim
@@ -149,7 +149,7 @@ class HeadModule(nn.Module):
         self.feature_bbox = feature_bbox
         self.noise = noise
         self.deform_scale = deform_scale
-        self.disable_viewdir_dependence = disable_viewdir_dependence
+        self.viewdir_dependence = viewdir_dependence
 
         self.density_linear_dims = [108 + self.exp_dim] + density_linear_dims
         self.color_linear_dims = [135 + self.exp_dim] + color_linear_dims
@@ -182,7 +182,7 @@ class HeadModule(nn.Module):
         self.deform_embedding, self.deform_out_dim = get_embedder(self.embedding_freq)
         # TODO(LS): re-enable viewdir dependence!
         self.view_embedding, self.view_out_dim = get_embedder(
-            self.embedding_freq, disable_viewdir_dependence=self.disable_viewdir_dependence
+            self.embedding_freq, viewdir_dependence=self.viewdir_dependence
         )
 
     def _rot_trans_from_pose(self, pose):
@@ -325,7 +325,7 @@ class AvatarMAVField(Field):
         headmodule_feature_res: int = 64,
         headmodule_exp_dim: int = 32,
         headmodule_deform_bs_res: int = 32,
-        headmodule_disable_viewdir_dependence: bool = True,
+        headmodule_viewdir_dependence: bool = True,
     ) -> None:
         super().__init__()
 
@@ -341,7 +341,7 @@ class AvatarMAVField(Field):
             feature_res=headmodule_feature_res,
             exp_dim=headmodule_exp_dim,
             deform_bs_res=headmodule_deform_bs_res,
-            disable_viewdir_dependence=headmodule_disable_viewdir_dependence,
+            viewdir_dependence=headmodule_viewdir_dependence,
         )
 
         # self.flame_exp_codes_per_cam = torch.zeros((self.num_images, self.headmodule.exp_dim), device="cuda")

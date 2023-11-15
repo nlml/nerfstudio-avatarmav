@@ -119,7 +119,7 @@ class AvatarMAVModelConfig(ModelConfig):
     """Expression code dimension for the AvatarMAV field."""
     headmodule_deform_bs_res: int = 32
     """Resolution of the deformation grid in the AvatarMAV field."""
-    headmodule_disable_viewdir_dependence: bool = True
+    headmodule_viewdir_dependence: bool = False
     """Whether to multiply by 0 the viewdir embedding in the AvatarMAV field."""
     num_cameras_per_batch: int = 4
     """Number of cameras per batch - this MUST BE the same as passed to the datamanager!"""
@@ -154,7 +154,7 @@ class AvatarMAVModel(Model):
             headmodule_feature_res=self.config.headmodule_feature_res,
             headmodule_exp_dim=self.config.headmodule_exp_dim,
             headmodule_deform_bs_res=self.config.headmodule_deform_bs_res,
-            headmodule_disable_viewdir_dependence=self.config.headmodule_disable_viewdir_dependence,
+            headmodule_viewdir_dependence=self.config.headmodule_viewdir_dependence,
         )
 
         self.density_fns = []

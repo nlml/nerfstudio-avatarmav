@@ -27,7 +27,7 @@ class MLP(nn.Module):
 class Embedder:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.disable_viewdir_dependence = kwargs["disable_viewdir_dependence"]
+        self.viewdir_dependence = kwargs["viewdir_dependence"]
         self.create_embedding_fn()
 
     def create_embedding_fn(self):
@@ -56,12 +56,12 @@ class Embedder:
 
     def embed(self, inputs):
         out = torch.cat([fn(inputs) for fn in self.embed_fns], -1)
-        if self.disable_viewdir_dependence:
+        if not self.viewdir_dependence:
             out = out * 0
         return out
 
 
-def get_embedder(multires, i=0, disable_viewdir_dependence=False):
+def get_embedder(multires, i=0, viewdir_dependence=True):
     if i == -1:
         return nn.Identity(), 3
 
@@ -72,7 +72,7 @@ def get_embedder(multires, i=0, disable_viewdir_dependence=False):
         "num_freqs": multires,
         "log_sampling": True,
         "periodic_fns": [torch.sin, torch.cos],
-        "disable_viewdir_dependence": disable_viewdir_dependence,
+        "viewdir_dependence": viewdir_dependence,
     }
 
     embedder_obj = Embedder(**embed_kwargs)
