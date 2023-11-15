@@ -368,34 +368,17 @@ class AvatarMAVField(Field):
         if not self.training and os.path.exists("/tmp/pose.npy"):
             try:
                 pose = torch.from_numpy(np.load("/tmp/pose.npy")).view(1, -1)
-                if pose.shape[1] == 6:  # axis-angle
-                    R = _so3_exp_map(pose[:, :3])
-                    T = pose[:, 3:, None]
-                    Rt = torch.cat([R.view(-1), T.view(-1)])
-                    pose = Rt.view(1, -1)
-                pose = pose.repeat(self.num_cameras_per_batch, 1).to(ray_samples.frustums.directions.device)
             except Exception as e:
                 print("Error in loading pose!")
                 print(e)
+        if pose.shape[1] == 6:  # axis-angle
+            R = _so3_exp_map(pose[:, :3])
+            T = pose[:, 3:, None]
+            pose = torch.cat([R.view(-1, 9), T.view(-1, 3)], 1)
+        if pose.shape[0] < self.num_cameras_per_batch:
+            pose = pose.repeat(self.num_cameras_per_batch, 1)
+        pose = pose.to(ray_samples.frustums.directions.device)
         return exp, pose
-
-    # def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
-    #     cam_indices_one_per_cam = ray_samples.camera_indices[::n_rays_per_camera, 0, 0]
-
-    #     self.flame_exp_codes_per_cam = self.flame_exp_codes_per_cam.to(ray_samples.frustums.directions.device)
-    #     self.flame_pose_codes_per_cam = self.flame_pose_codes_per_cam.to(ray_samples.frustums.directions.device)
-
-    #     exp = self.flame_exp_codes_per_cam[cam_indices_one_per_cam]
-    #     pose = self.flame_pose_codes_per_cam[cam_indices_one_per_cam]
-
-    #     if not self.training and os.path.exists("/tmp/pose.npy"):
-    #         pose = (
-    #             torch.from_numpy(np.load("/tmp/pose.npy"))
-    #             .view(1, 6)
-    #             .repeat(cam_indices_one_per_cam.shape[0], 1)
-    #             .to(ray_samples.frustums.directions.device)
-    #         )
-    #     return exp, pose
 
     def get_density(self, ray_samples: RaySamples, return_offsets: Optional[bool] = False) -> Tuple[Tensor, Tensor]:
         """Computes and returns the densities."""
