@@ -250,8 +250,7 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
         self.iter_eval_image_dataloader = iter(self.eval_image_dataloader)
         num_cameras_per_batch = None
         if self.config.train_num_cameras_per_batch is not None:
-            num_cameras_per_batch = None  # len(self.eval_dataset.cameras)
-            print("self.config.eval_num_images_to_sample_from", self.config.eval_num_images_to_sample_from)
+            num_cameras_per_batch = self.config.eval_num_images_to_sample_from
         self.eval_pixel_sampler = self._get_pixel_sampler(self.eval_dataset, self.config.eval_num_rays_per_batch, num_cameras_per_batch=num_cameras_per_batch)  # type: ignore
         self.eval_ray_generator = RayGenerator(self.eval_dataset.cameras.to(self.device))
         # for loading full images

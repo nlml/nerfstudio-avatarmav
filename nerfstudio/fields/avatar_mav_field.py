@@ -341,20 +341,22 @@ class AvatarMAVField(Field):
         else:
             return 1
 
-    def get_exp_pose(self, ray_samples: RaySamples, n_rays_per_camera: int) -> Tuple[Tensor, Tensor]:
+    def get_exp_pose(
+        self, ray_samples: RaySamples, n_rays_per_camera: int, num_cameras_per_batch: int
+    ) -> Tuple[Tensor, Tensor]:
         if ray_samples.metadata is not None and "flame_exps" in ray_samples.metadata:
             exp = ray_samples.metadata["flame_exps"][::n_rays_per_camera, 0]
         else:
             assert not self.training, "flame_exps must be provided during training"
             exp = torch.zeros(
-                (self.num_cameras_per_batch, self.headmodule.exp_dim), device=ray_samples.frustums.directions.device
+                (num_cameras_per_batch, self.headmodule.exp_dim), device=ray_samples.frustums.directions.device
             )
         if not self.training and os.path.exists("/tmp/exp.npy"):
             try:
                 exp = (
                     torch.from_numpy(np.load("/tmp/exp.npy"))
                     .view(1, -1)
-                    .repeat(self.num_cameras_per_batch, 1)
+                    .repeat(num_cameras_per_batch, 1)
                     .to(ray_samples.frustums.directions.device)
                 )
             except Exception as e:
@@ -364,7 +366,7 @@ class AvatarMAVField(Field):
             pose = ray_samples.metadata["flame_poses"]  # has shape [n_rays, n_samples, 6]
             pose = pose[::n_rays_per_camera, 0]
         else:
-            pose = torch.zeros((self.num_cameras_per_batch, 6), device=ray_samples.frustums.directions.device)
+            pose = torch.zeros((num_cameras_per_batch, 6), device=ray_samples.frustums.directions.device)
         if not self.training and os.path.exists("/tmp/pose.npy"):
             try:
                 pose = torch.from_numpy(np.load("/tmp/pose.npy")).view(1, -1)
@@ -375,10 +377,15 @@ class AvatarMAVField(Field):
             R = _so3_exp_map(pose[:, :3])
             T = pose[:, 3:, None]
             pose = torch.cat([R.view(-1, 9), T.view(-1, 3)], 1)
-        if pose.shape[0] < self.num_cameras_per_batch:
-            pose = pose.repeat(self.num_cameras_per_batch, 1)
+        if pose.shape[0] < num_cameras_per_batch:
+            pose = pose.repeat(num_cameras_per_batch, 1)
         pose = pose.to(ray_samples.frustums.directions.device)
         return exp, pose
+
+    def _num_cams_from_camera_indices(self, camera_indices):
+        cam_idxs = camera_indices[:, 0, 0]
+        num_cameras = len(torch.where((cam_idxs[1:] - cam_idxs[:-1]) != 0)[0]) + 1
+        return num_cameras
 
     def get_density(self, ray_samples: RaySamples, return_offsets: Optional[bool] = False) -> Tuple[Tensor, Tensor]:
         """Computes and returns the densities."""
@@ -396,18 +403,21 @@ class AvatarMAVField(Field):
             self._sample_locations.requires_grad = True
 
         n_rays = positions.shape[0]
-        n_rays_per_camera = n_rays // self.num_cameras_per_batch
-        if ray_samples.camera_indices is not None:
-            for i in range(self.num_cameras_per_batch):
+        num_cameras_per_batch = self.num_cameras_per_batch
+        n_rays_per_camera = n_rays // num_cameras_per_batch
+        if hasattr(ray_samples, "camera_indices") and ray_samples.camera_indices is not None:
+            num_cameras_per_batch = self._num_cams_from_camera_indices(ray_samples.camera_indices)
+            n_rays_per_camera = n_rays // num_cameras_per_batch
+            for i in range(num_cameras_per_batch):
                 # TODO(LS): can delete this sanity check later
                 subset = ray_samples.camera_indices[n_rays_per_camera * i : n_rays_per_camera * (i + 1), :, 0].reshape(
                     -1
                 )
                 assert (subset[0] == subset).all()
 
-        positions = rearrange(positions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
+        positions = rearrange(positions, "(n rays) samples dim -> n dim (rays samples)", n=num_cameras_per_batch)
 
-        exp, pose = self.get_exp_pose(ray_samples, n_rays_per_camera)
+        exp, pose = self.get_exp_pose(ray_samples, n_rays_per_camera, num_cameras_per_batch)
 
         # Positions going in should have shape [nCams, 3, (nRays * nSamples)]
         # Exp going in should have shape [nCams, expDim]
@@ -444,17 +454,19 @@ class AvatarMAVField(Field):
         # positions.shape = (num_rays, num_samples, 3)
 
         n_rays = ray_samples.frustums.directions.shape[0]
-        n_rays_per_camera = n_rays // self.num_cameras_per_batch
+
+        num_cameras_per_batch = self._num_cams_from_camera_indices(ray_samples.camera_indices)
+        n_rays_per_camera = n_rays // num_cameras_per_batch
 
         # density_embedding should have shape [nCams, featureDim, nRays * nSamples]
         density_embedding = rearrange(
-            density_embedding, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch
+            density_embedding, "(n rays) samples dim -> n dim (rays samples)", n=num_cameras_per_batch
         )
         # query_viewdirs should have shape [nCams, 3, nRays * nSamples]
-        viewdirs = rearrange(directions, "(n rays) samples dim -> n dim (rays samples)", n=self.num_cameras_per_batch)
+        viewdirs = rearrange(directions, "(n rays) samples dim -> n dim (rays samples)", n=num_cameras_per_batch)
         # exp should have shape [nCams, expDim]
 
-        exp, pose = self.get_exp_pose(ray_samples, n_rays_per_camera)
+        exp, pose = self.get_exp_pose(ray_samples, n_rays_per_camera, num_cameras_per_batch)
         rgb = self.headmodule.color(density_embedding, viewdirs, exp, pose)
         rgb = rearrange(rgb, "n c (rays samples) -> (n rays) samples c", samples=directions.shape[1])
         outputs.update({FieldHeadNames.RGB: rgb})
