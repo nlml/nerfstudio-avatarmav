@@ -126,7 +126,7 @@ class HeadModule(nn.Module):
         deform_bs_res=32,
         deform_bs_dim=2,
         deform_linear_dims=[54, 128, 3],
-        density_linear_dims=[140, 128, 1],
+        density_linear_dims=[128, 1],
         color_linear_dims=[167, 128, 3],
         interp_level=3,
         embedding_freq=4,
@@ -142,14 +142,15 @@ class HeadModule(nn.Module):
         self.deform_bs_res = deform_bs_res
         self.deform_bs_dim = deform_bs_dim
         self.deform_linear_dims = deform_linear_dims
-        self.density_linear_dims = density_linear_dims
-        self.color_linear_dims = color_linear_dims
         self.interp_level = interp_level
         self.embedding_freq = embedding_freq
         self.deform_bbox = deform_bbox
         self.feature_bbox = feature_bbox
         self.noise = noise
         self.deform_scale = deform_scale
+
+        self.density_linear_dims = [108 + self.exp_dim] + density_linear_dims
+        self.color_linear_dims = [135 + self.exp_dim] + color_linear_dims
 
         self.deform_bs_volume = nn.Parameter(
             torch.zeros(
@@ -318,6 +319,8 @@ class AvatarMAVField(Field):
         spatial_distortion: Optional[SpatialDistortion] = None,
         num_cameras_per_batch: int = 4,
         headmodule_feature_res: int = 64,
+        headmodule_exp_dim: int = 32,
+        headmodule_deform_bs_res: int = 32,
     ) -> None:
         super().__init__()
 
@@ -329,7 +332,9 @@ class AvatarMAVField(Field):
         self.num_images = num_images
         self.step = 0
 
-        self.headmodule = HeadModule(feature_res=headmodule_feature_res)
+        self.headmodule = HeadModule(
+            feature_res=headmodule_feature_res, exp_dim=headmodule_exp_dim, deform_bs_res=headmodule_deform_bs_res
+        )
 
         # self.flame_exp_codes_per_cam = torch.zeros((self.num_images, self.headmodule.exp_dim), device="cuda")
         # self.flame_pose_codes_per_cam = torch.zeros((self.num_images, 6), device="cuda")
@@ -341,11 +346,9 @@ class AvatarMAVField(Field):
         else:
             return 1
 
-    def get_exp_pose(
-        self, ray_samples: RaySamples, n_rays_per_camera: int, num_cameras_per_batch: int
-    ) -> Tuple[Tensor, Tensor]:
+    def get_exp(self, ray_samples: RaySamples, n_rays_per_camera: int, num_cameras_per_batch: int) -> Tensor:
         if ray_samples.metadata is not None and "flame_exps" in ray_samples.metadata:
-            exp = ray_samples.metadata["flame_exps"][::n_rays_per_camera, 0]
+            return ray_samples.metadata["flame_exps"][::n_rays_per_camera, 0]
         else:
             assert not self.training, "flame_exps must be provided during training"
             exp = torch.zeros(
@@ -362,9 +365,11 @@ class AvatarMAVField(Field):
             except Exception as e:
                 print("Error in loading expression!")
                 print(e)
+        return exp
+
+    def get_pose(self, ray_samples: RaySamples, n_rays_per_camera: int, num_cameras_per_batch: int) -> Tensor:
         if ray_samples.metadata is not None and "flame_poses" in ray_samples.metadata:
-            pose = ray_samples.metadata["flame_poses"]  # has shape [n_rays, n_samples, 6]
-            pose = pose[::n_rays_per_camera, 0]
+            return ray_samples.metadata["flame_poses"][::n_rays_per_camera, 0]
         else:
             pose = torch.zeros((num_cameras_per_batch, 6), device=ray_samples.frustums.directions.device)
         if not self.training and os.path.exists("/tmp/pose.npy"):
@@ -380,6 +385,13 @@ class AvatarMAVField(Field):
         if pose.shape[0] < num_cameras_per_batch:
             pose = pose.repeat(num_cameras_per_batch, 1)
         pose = pose.to(ray_samples.frustums.directions.device)
+        return pose
+
+    def get_exp_pose(
+        self, ray_samples: RaySamples, n_rays_per_camera: int, num_cameras_per_batch: int
+    ) -> Tuple[Tensor, Tensor]:
+        exp = self.get_exp(ray_samples, n_rays_per_camera, num_cameras_per_batch)
+        pose = self.get_pose(ray_samples, n_rays_per_camera, num_cameras_per_batch)
         return exp, pose
 
     def _num_cams_from_camera_indices(self, camera_indices):

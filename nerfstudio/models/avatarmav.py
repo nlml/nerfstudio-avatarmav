@@ -114,10 +114,14 @@ class AvatarMAVModelConfig(ModelConfig):
     """Config of the camera optimizer to use"""
     use_avatarmav_field_as_proposal_network: bool = False
     """Use the AvatarMAV field as the proposal network, per the original paper."""
-    offset_reg_loss: float = 0.0
+    offset_reg_loss: float = 1e-3
     """Penalisation for the norm of the offsets in the AvatarMAV field."""
     headmodule_feature_res: int = 64
-    """Resolution of the feature grid in the head module of the AvatarMAV field."""
+    """Resolution of the feature grid in the AvatarMAV field."""
+    headmodule_exp_dim: int = 32
+    """Expression code dimension for the AvatarMAV field."""
+    headmodule_deform_bs_res: int = 32
+    """Resolution of the deformation grid in the AvatarMAV field."""
     num_cameras_per_batch: int = 4
     """Number of cameras per batch - this MUST BE the same as passed to the datamanager!"""
     use_l1_loss: bool = False
@@ -148,6 +152,8 @@ class AvatarMAVModel(Model):
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
             headmodule_feature_res=self.config.headmodule_feature_res,
+            headmodule_exp_dim=self.config.headmodule_exp_dim,
+            headmodule_deform_bs_res=self.config.headmodule_deform_bs_res,
             num_cameras_per_batch=self.config.num_cameras_per_batch,
         )
 

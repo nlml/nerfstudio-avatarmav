@@ -78,7 +78,11 @@ class NerfstudioDataParserConfig(DataParserConfig):
     apply_flame_poses_to_cams: bool = False
     """If True, FLAME poses will be added to camera poses, and zero pose will be passed to ray deformation."""
     apply_neck_rot_to_flame_pose: bool = False
-    """If True, neck rotation will be applied to the flame pose, instead of being passed to deformation field."""
+    """If True, neck rotation will be applied to the flame pose, instead of to expression code."""
+    neck_pose_to_expr: bool = False
+    """If True, neck rotation will be passed to the conditioning expression no matter what!"""
+    eyes_pose_to_expr: bool = False
+    """If True, eyes rotation will be passed to the conditioning expression code."""
 
 
 @dataclass
@@ -334,8 +338,13 @@ class Nerfstudio(DataParser):
             flame_pose = torch.cat([R.view(-1), T.view(-1)])
             flame_poses.append(flame_pose)
 
-            maybe_neck_pose = [] if self.config.apply_neck_rot_to_flame_pose else [fp["neck_pose"]]
-            expr_to_cat = maybe_neck_pose + [fp["jaw_pose"], fp["expr"]]
+            maybe_neck_pose = (
+                []
+                if (not self.config.neck_pose_to_expr and self.config.apply_neck_rot_to_flame_pose)
+                else [fp["neck_pose"]]
+            )
+            maybe_eyes_pose = [fp["eyes_pose"]] if self.config.eyes_pose_to_expr else []
+            expr_to_cat = maybe_neck_pose + maybe_eyes_pose + [fp["jaw_pose"], fp["expr"]]
             flame_exps.append(torch.from_numpy(np.concatenate(expr_to_cat, 1)[0]).float())
 
         flame_poses = torch.stack(flame_poses).float()
