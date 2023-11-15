@@ -99,7 +99,6 @@ class Nerfstudio(DataParser):
 
         if self.config.data.name.endswith("_train.json"):
             transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split}.json"))
-            print(split, "transforms_json_path", transforms_json_path)
             meta = load_from_json(transforms_json_path)
             data_dir = self.config.data.parent
         elif self.config.data.suffix == ".json":

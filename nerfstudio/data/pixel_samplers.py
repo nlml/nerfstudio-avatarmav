@@ -40,8 +40,6 @@ class PixelSamplerConfig(InstantiateConfig):
     """Whether or not to include a reference to the full image in returned batch."""
     is_equirectangular: bool = False
     """List of whether or not camera i is equirectangular."""
-    num_cameras_per_batch: Optional[int] = None
-    """Used for AvatarMAV: sample from a fixed number of cameras per batch."""
 
 
 class PixelSampler:
@@ -60,8 +58,6 @@ class PixelSampler:
         self.config.num_rays_per_batch = self.kwargs.get("num_rays_per_batch", self.config.num_rays_per_batch)
         self.config.keep_full_image = self.kwargs.get("keep_full_image", self.config.keep_full_image)
         self.config.is_equirectangular = self.kwargs.get("is_equirectangular", self.config.is_equirectangular)
-        self.config.num_cameras_per_batch = self.kwargs.get("num_cameras_per_batch", self.config.num_cameras_per_batch)
-        self.set_num_rays_per_batch(self.config.num_rays_per_batch)
 
     def set_num_rays_per_batch(self, num_rays_per_batch: int):
         """Set the number of rays to sample per batch.
@@ -92,21 +88,11 @@ class PixelSampler:
             nonzero_indices = torch.nonzero(mask[..., 0], as_tuple=False)
             chosen_indices = random.sample(range(len(nonzero_indices)), k=batch_size)
             indices = nonzero_indices[chosen_indices]
-            # TODO(LS): Delete this later, its just to ensure we dont enter here for avatarmav
-            raise Exception("we don't wanna be using this!!")
         else:
             indices = (
                 torch.rand((batch_size, 3), device=device)
                 * torch.tensor([num_images, image_height, image_width], device=device)
             ).long()
-            if self.config.num_cameras_per_batch is not None:
-                # Then we want to sample a fixed number of unique images per batch.
-                # We sample the same number of pixels for each image and stack them in order.
-                assert batch_size % self.config.num_cameras_per_batch == 0
-                selected_images = torch.randperm(num_images)[: self.config.num_cameras_per_batch].repeat_interleave(
-                    batch_size // self.config.num_cameras_per_batch
-                )
-                indices[:, 0] = selected_images
 
         return indices
 
@@ -364,6 +350,63 @@ class PatchPixelSampler(PixelSampler):
 
             indices = torch.floor(indices).long()
             indices = indices.flatten(0, 2)
+
+        return indices
+
+
+@dataclass
+class AvatarMAVPixelSamplerConfig(PixelSamplerConfig):
+    """Config dataclass for AvatarMAVPixelSampler."""
+
+    _target: Type = field(default_factory=lambda: AvatarMAVPixelSampler)
+    """Target class to instantiate."""
+    num_cameras_per_batch: int = 8
+    """Used for AvatarMAV: sample from a fixed number of cameras per batch."""
+
+
+class AvatarMAVPixelSampler(PixelSampler):
+    def __init__(self, config: AvatarMAVPixelSamplerConfig, **kwargs) -> None:
+        self.config = config
+        self.num_cameras_per_batch = self.config.num_cameras_per_batch
+        self.num_rays_per_batch = self.config.num_rays_per_batch
+        super().__init__(self.config, **kwargs)
+
+    def sample_method(
+        self,
+        batch_size: int,
+        num_images: int,
+        image_height: int,
+        image_width: int,
+        mask: Optional[Tensor] = None,
+        device: Union[torch.device, str] = "cpu",
+    ) -> Int[Tensor, "batch_size 3"]:
+        """
+        Naive pixel sampler, uniformly samples across all possible pixels of all possible images.
+
+        Args:
+            batch_size: number of samples in a batch
+            num_images: number of images to sample over
+            mask: mask of possible pixels in an image to sample from.
+        """
+        if isinstance(mask, torch.Tensor):
+            nonzero_indices = torch.nonzero(mask[..., 0], as_tuple=False)
+            chosen_indices = random.sample(range(len(nonzero_indices)), k=batch_size)
+            indices = nonzero_indices[chosen_indices]
+            # TODO(LS): Delete this later, its just to ensure we dont enter here for avatarmav
+            raise Exception("we don't wanna be using this!!")
+        else:
+            indices = (
+                torch.rand((batch_size, 3), device=device)
+                * torch.tensor([num_images, image_height, image_width], device=device)
+            ).long()
+            if self.num_cameras_per_batch is not None:
+                # Then we want to sample a fixed number of unique images per batch.
+                # We sample the same number of pixels for each image and stack them in order.
+                assert batch_size % self.num_cameras_per_batch == 0
+                selected_images = torch.randperm(num_images)[: self.num_cameras_per_batch].repeat_interleave(
+                    batch_size // self.num_cameras_per_batch
+                )
+                indices[:, 0] = selected_images
 
         return indices
 

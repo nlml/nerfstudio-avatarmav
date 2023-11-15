@@ -83,39 +83,44 @@ descriptions = {
 
 method_configs["avatarmav"] = TrainerConfig(
     method_name="avatarmav",
-    steps_per_eval_batch=50_000,
+    steps_per_eval_batch=200,
+    steps_per_eval_image=500,
+    steps_per_eval_all_images=20_001,
     steps_per_save=5_000,
-    max_num_iterations=300_000,
+    max_num_iterations=100_001,
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
-        datamanager=ParallelDataManagerConfig(
+        datamanager=VanillaDataManagerConfig(
+            pixel_sampler=AvatarMAVPixelSamplerConfig(num_cameras_per_batch=16),
             dataparser=NerfstudioDataParserConfig(
                 center_method="none",
                 orientation_method="none",
-                train_split_fraction=1 - (1 / 2000.0),  # TODO(LS) remove this hardcoded value
             ),
-            train_num_rays_per_batch=4096,
+            train_num_rays_per_batch=4096 * 4,
             eval_num_rays_per_batch=4096,
+            # Large dataset, so using prior values from VariableResDataManager.
+            train_num_images_to_sample_from=1000,
+            train_num_times_to_repeat_images=2000,
+            eval_num_images_to_sample_from=64,
+            eval_num_times_to_repeat_images=32,
         ),
         model=AvatarMAVModelConfig(
             eval_num_rays_per_chunk=1 << 15,
-            # TODO(LS): disable camera optimizer
-            camera_optimizer=CameraOptimizerConfig(mode="SO3xR3"),
             disable_scene_contraction=True,
         ),
     ),
     optimizers={
         "proposal_networks": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.00001, max_steps=1_000_000),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.00001, max_steps=80_000),
         },
         "fields": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.00001, max_steps=1_000_000),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.00001, max_steps=80_000),
         },
         "camera_opt": {
-            "optimizer": AdamOptimizerConfig(lr=1e-10, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-12, max_steps=5000),
+            "optimizer": AdamOptimizerConfig(lr=1e-6, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-7, max_steps=5000),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),

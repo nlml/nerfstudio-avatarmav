@@ -84,6 +84,8 @@ class TrainerConfig(ExperimentConfig):
     """Optionally log gradients during training"""
     gradient_accumulation_steps: int = 1
     """Number of steps to accumulate gradients over."""
+    save_eval_images_path: Optional[Path] = None
+    """Folder to save images to if/when evaluating on all images."""
 
 
 class Trainer:
@@ -540,5 +542,6 @@ class Trainer:
 
         # all eval images
         if step_check(step, self.config.steps_per_eval_all_images):
-            metrics_dict = self.pipeline.get_average_eval_image_metrics(step=step)
+            output_path = self.config.save_eval_images_path
+            metrics_dict = self.pipeline.get_average_eval_image_metrics(step=step, output_path=output_path)
             writer.put_dict(name="Eval Images Metrics Dict (all images)", scalar_dict=metrics_dict, step=step)
