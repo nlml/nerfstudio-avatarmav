@@ -26,28 +26,38 @@ import tyro
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.configs.external_methods import get_external_methods
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig
-from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManagerConfig
-from nerfstudio.data.datamanagers.random_cameras_datamanager import RandomCamerasDataManagerConfig
-from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
+from nerfstudio.data.datamanagers.base_datamanager import (
+    VanillaDataManager, VanillaDataManagerConfig)
+from nerfstudio.data.datamanagers.parallel_datamanager import \
+    ParallelDataManagerConfig
+from nerfstudio.data.datamanagers.random_cameras_datamanager import \
+    RandomCamerasDataManagerConfig
+from nerfstudio.data.dataparsers.blender_dataparser import \
+    BlenderDataParserConfig
 from nerfstudio.data.dataparsers.dnerf_dataparser import DNeRFDataParserConfig
-from nerfstudio.data.dataparsers.instant_ngp_dataparser import InstantNGPDataParserConfig
-from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
-from nerfstudio.data.dataparsers.phototourism_dataparser import PhototourismDataParserConfig
-from nerfstudio.data.dataparsers.sdfstudio_dataparser import SDFStudioDataParserConfig
-from nerfstudio.data.dataparsers.sitcoms3d_dataparser import Sitcoms3DDataParserConfig
+from nerfstudio.data.dataparsers.instant_ngp_dataparser import \
+    InstantNGPDataParserConfig
+from nerfstudio.data.dataparsers.nerfstudio_dataparser import \
+    NerfstudioDataParserConfig
+from nerfstudio.data.dataparsers.phototourism_dataparser import \
+    PhototourismDataParserConfig
+from nerfstudio.data.dataparsers.sdfstudio_dataparser import \
+    SDFStudioDataParserConfig
+from nerfstudio.data.dataparsers.sitcoms3d_dataparser import \
+    Sitcoms3DDataParserConfig
 from nerfstudio.data.datasets.depth_dataset import DepthDataset
 from nerfstudio.data.datasets.sdf_dataset import SDFDataset
 from nerfstudio.data.datasets.semantic_dataset import SemanticDataset
-from nerfstudio.data.pixel_samplers import AvatarMAVPixelSamplerConfig, PairPixelSamplerConfig
-from nerfstudio.engine.optimizers import AdamOptimizerConfig, RAdamOptimizerConfig
-from nerfstudio.engine.schedulers import (
-    CosineDecaySchedulerConfig,
-    ExponentialDecaySchedulerConfig,
-    MultiStepSchedulerConfig,
-)
+from nerfstudio.data.pixel_samplers import (AvatarMAVPixelSamplerConfig,
+                                            PairPixelSamplerConfig)
+from nerfstudio.engine.optimizers import (AdamOptimizerConfig,
+                                          RAdamOptimizerConfig)
+from nerfstudio.engine.schedulers import (CosineDecaySchedulerConfig,
+                                          ExponentialDecaySchedulerConfig,
+                                          MultiStepSchedulerConfig)
 from nerfstudio.engine.trainer import TrainerConfig
-from nerfstudio.field_components.temporal_distortions import TemporalDistortionKind
+from nerfstudio.field_components.temporal_distortions import \
+    TemporalDistortionKind
 from nerfstudio.fields.sdf_field import SDFFieldConfig
 from nerfstudio.models.avatarmav import AvatarMAVModelConfig
 from nerfstudio.models.depth_nerfacto import DepthNerfactoModelConfig
@@ -85,7 +95,7 @@ method_configs["avatarmav"] = TrainerConfig(
     method_name="avatarmav",
     steps_per_eval_batch=200,
     steps_per_eval_image=500,
-    steps_per_eval_all_images=20_001,
+    steps_per_eval_all_images=500_001,
     steps_per_save=5_000,
     max_num_iterations=100_001,
     mixed_precision=True,
@@ -99,8 +109,8 @@ method_configs["avatarmav"] = TrainerConfig(
             train_num_rays_per_batch=4096 * 4,
             eval_num_rays_per_batch=4096,
             # Large dataset, so using prior values from VariableResDataManager.
-            train_num_images_to_sample_from=1000,
-            train_num_times_to_repeat_images=2000,
+            train_num_images_to_sample_from=500,
+            train_num_times_to_repeat_images=500,
             eval_num_images_to_sample_from=64,
             eval_num_times_to_repeat_images=32,
         ),

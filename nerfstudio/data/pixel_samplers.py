@@ -388,25 +388,18 @@ class AvatarMAVPixelSampler(PixelSampler):
             num_images: number of images to sample over
             mask: mask of possible pixels in an image to sample from.
         """
-        if isinstance(mask, torch.Tensor):
-            nonzero_indices = torch.nonzero(mask[..., 0], as_tuple=False)
-            chosen_indices = random.sample(range(len(nonzero_indices)), k=batch_size)
-            indices = nonzero_indices[chosen_indices]
-            # TODO(LS): Delete this later, its just to ensure we dont enter here for avatarmav
-            raise Exception("we don't wanna be using this!!")
-        else:
-            indices = (
-                torch.rand((batch_size, 3), device=device)
-                * torch.tensor([num_images, image_height, image_width], device=device)
-            ).long()
-            if self.num_cameras_per_batch is not None:
-                # Then we want to sample a fixed number of unique images per batch.
-                # We sample the same number of pixels for each image and stack them in order.
-                assert batch_size % self.num_cameras_per_batch == 0
-                selected_images = torch.randperm(num_images)[: self.num_cameras_per_batch].repeat_interleave(
-                    batch_size // self.num_cameras_per_batch
-                )
-                indices[:, 0] = selected_images
+        indices = (
+            torch.rand((batch_size, 3), device=device)
+            * torch.tensor([num_images, image_height, image_width], device=device)
+        ).long()
+        if self.num_cameras_per_batch is not None:
+            # Then we want to sample a fixed number of unique images per batch.
+            # We sample the same number of pixels for each image and stack them in order.
+            assert batch_size % self.num_cameras_per_batch == 0
+            selected_images = torch.randperm(num_images)[: self.num_cameras_per_batch].repeat_interleave(
+                batch_size // self.num_cameras_per_batch
+            )
+            indices[:, 0] = selected_images
 
         return indices
 

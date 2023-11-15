@@ -98,7 +98,8 @@ class Nerfstudio(DataParser):
         assert self.config.data.exists(), f"Data directory {self.config.data} does not exist."
 
         if self.config.data.name.endswith("_train.json"):
-            transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split}.json"))
+            split_str = split  # if split == "train" else "val"  # override for ns-eval!
+            transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split_str}.json"))
             meta = load_from_json(transforms_json_path)
             data_dir = self.config.data.parent
         elif self.config.data.suffix == ".json":
@@ -379,10 +380,13 @@ class Nerfstudio(DataParser):
             applied_scale = float(meta["applied_scale"])
             scale_factor *= applied_scale
 
+        # print(len(mask_filenames), "len(mask_filenames)")
+        # print(len(fg_mask_fnames), "len(fg_mask_fnames)")
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
             cameras=cameras,
             scene_box=scene_box,
+            # mask_filenames=fg_mask_fnames if len(fg_mask_fnames) > 0 else None,
             mask_filenames=mask_filenames if len(mask_filenames) > 0 else None,
             dataparser_scale=scale_factor,
             dataparser_transform=transform_matrix,
