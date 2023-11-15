@@ -34,6 +34,7 @@ from nerfstudio.data.utils.dataparsers_utils import (
     get_train_eval_split_interval,
 )
 from nerfstudio.fields.avatar_mav_field import _so3_exp_map
+from nerfstudio.flame.flame import FlameHead
 from nerfstudio.utils.io import load_from_json
 from nerfstudio.utils.rich_utils import CONSOLE
 
@@ -88,6 +89,8 @@ class Nerfstudio(DataParser):
     downscale_factor: Optional[int] = None
 
     def _generate_dataparser_outputs(self, split="train"):
+        flame_model = FlameHead(300, 100)
+
         assert self.config.data.exists(), f"Data directory {self.config.data} does not exist."
 
         if self.config.data.suffix == ".json":
@@ -329,7 +332,7 @@ class Nerfstudio(DataParser):
                 neck_rot = _so3_exp_map(torch.from_numpy(fp["neck_pose"]).float())[0]
                 R = R @ neck_rot
 
-                verts, posed_joints, landmarks = self.flame(
+                verts, posed_joints, landmarks = flame_model(
                     torch.tensor(fp["shape"][None, ...]).float(),
                     torch.tensor(fp["expr"]).float(),
                     torch.tensor(fp["rotation"]).float(),
@@ -341,8 +344,8 @@ class Nerfstudio(DataParser):
                 )
 
                 neck_translation = posed_joints[:, 1]
-                T = neck_translation[...]
-                assert T.shape == (3)
+                T = neck_translation[...][0].float()
+                assert list(T.shape) == [3], T.shape
 
             if self.config.apply_flame_poses_to_cams:
                 # Compute inverse flame pose
@@ -362,10 +365,10 @@ class Nerfstudio(DataParser):
 
             maybe_neck_pose = [] if self.config.apply_neck_rot_to_flame_pose else [fp["neck_pose"]]
             expr_to_cat = maybe_neck_pose + [fp["jaw_pose"], fp["expr"]]
-            flame_exps.append(np.concatenate(expr_to_cat, 1)[0])
+            flame_exps.append(torch.from_numpy(np.concatenate(expr_to_cat, 1)[0]).float())
 
-        flame_poses = torch.from_numpy(np.array(flame_poses).astype(np.float32))
-        flame_exps = torch.from_numpy(np.array(flame_exps).astype(np.float32))
+        flame_poses = torch.stack(flame_poses).float()
+        flame_exps = torch.stack(flame_exps).float()
         print(split, flame_poses.shape)
         print(split, flame_exps.shape)
 
