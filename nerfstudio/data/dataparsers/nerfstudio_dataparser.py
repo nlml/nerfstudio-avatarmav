@@ -93,7 +93,12 @@ class Nerfstudio(DataParser):
 
         assert self.config.data.exists(), f"Data directory {self.config.data} does not exist."
 
-        if self.config.data.suffix == ".json":
+        if self.config.data.name.endswith("_train.json"):
+            transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split}.json"))
+            print(split, "transforms_json_path", transforms_json_path)
+            meta = load_from_json(transforms_json_path)
+            data_dir = self.config.data.parent
+        elif self.config.data.suffix == ".json":
             meta = load_from_json(self.config.data)
             data_dir = self.config.data.parent
         else:
@@ -221,41 +226,7 @@ class Nerfstudio(DataParser):
         You should check that flame_param_path is specified for every frame (or zero frames) in transforms.json.
         """
 
-        has_split_files_spec = any(f"{split}_filenames" in meta for split in ("train", "val", "test"))
-        if f"{split}_filenames" in meta:
-            # Validate split first
-            split_filenames = set(self._get_fname(Path(x), data_dir) for x in meta[f"{split}_filenames"])
-            unmatched_filenames = split_filenames.difference(image_filenames)
-            if unmatched_filenames:
-                raise RuntimeError(f"Some filenames for split {split} were not found: {unmatched_filenames}.")
-
-            indices = [i for i, path in enumerate(image_filenames) if path in split_filenames]
-            CONSOLE.log(f"[yellow] Dataset is overriding {split}_indices to {indices}")
-            indices = np.array(indices, dtype=np.int32)
-        elif has_split_files_spec:
-            raise RuntimeError(f"The dataset's list of filenames for split {split} is missing.")
-        else:
-            # find train and eval indices based on the eval_mode specified
-            if self.config.eval_mode == "fraction":
-                i_train, i_eval = get_train_eval_split_fraction(image_filenames, self.config.train_split_fraction)
-            elif self.config.eval_mode == "filename":
-                i_train, i_eval = get_train_eval_split_filename(image_filenames)
-            elif self.config.eval_mode == "interval":
-                i_train, i_eval = get_train_eval_split_interval(image_filenames, self.config.eval_interval)
-            elif self.config.eval_mode == "all":
-                CONSOLE.log(
-                    "[yellow] Be careful with '--eval-mode=all'. If using camera optimization, the cameras may diverge in the current implementation, giving unpredictable results."
-                )
-                i_train, i_eval = get_train_eval_split_all(image_filenames)
-            else:
-                raise ValueError(f"Unknown eval mode {self.config.eval_mode}")
-
-            if split == "train":
-                indices = i_train
-            elif split in ["val", "test"]:
-                indices = i_eval
-            else:
-                raise ValueError(f"Unknown dataparser split {split}")
+        indices = np.arange(len(image_filenames))
 
         if "orientation_override" in meta:
             orientation_method = meta["orientation_override"]
