@@ -27,6 +27,11 @@ from threading import Lock
 from typing import Dict, List, Literal, Optional, Tuple, Type, cast
 
 import torch
+from rich import box, style
+from rich.panel import Panel
+from rich.table import Table
+from torch.cuda.amp.grad_scaler import GradScaler
+
 from nerfstudio.configs.experiment_config import ExperimentConfig
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
@@ -39,10 +44,6 @@ from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.utils.writer import EventName, TimeWriter
 from nerfstudio.viewer.server.viewer_state import ViewerState
 from nerfstudio.viewer_beta.viewer import Viewer as ViewerBetaState
-from rich import box, style
-from rich.panel import Panel
-from rich.table import Table
-from torch.cuda.amp.grad_scaler import GradScaler
 
 TRAIN_INTERATION_OUTPUT = Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]
 TORCH_DEVICE = str
@@ -401,6 +402,17 @@ class Trainer:
             load_path: Path = load_dir / f"step-{load_step:09d}.ckpt"
             assert load_path.exists(), f"Checkpoint {load_path} does not exist"
             loaded_state = torch.load(load_path, map_location="cpu")
+
+            if 1:  # TODO(LS): remove all this
+                if "camera_opt" in loaded_state["optimizers"]:
+                    del loaded_state["optimizers"]["camera_opt"]
+                if "camera_opt" in loaded_state["schedulers"]:
+                    del loaded_state["schedulers"]["camera_opt"]
+                if "camera_opt" in loaded_state["scalers"]:
+                    del loaded_state["scalers"]["camera_opt"]
+                if "_model.camera_optimizer.pose_adjustment" in loaded_state["pipeline"]:
+                    del loaded_state["pipeline"]["_model.camera_optimizer.pose_adjustment"]
+
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
             self.pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"])

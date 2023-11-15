@@ -28,7 +28,6 @@ from torchmetrics.functional import structural_similarity_index_measure
 from torchmetrics.image import PeakSignalNoiseRatio
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 
-from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
 from nerfstudio.field_components.field_heads import FieldHeadNames
@@ -110,8 +109,6 @@ class AvatarMAVModelConfig(ModelConfig):
     """Use gradient scaler where the gradients are lower for points closer to the camera."""
     implementation: Literal["tcnn", "torch"] = "tcnn"
     """Which implementation to use for the model."""
-    camera_optimizer: CameraOptimizerConfig = CameraOptimizerConfig(mode="SO3xR3")
-    """Config of the camera optimizer to use"""
     use_avatarmav_field_as_proposal_network: bool = False
     """Use the AvatarMAV field as the proposal network, per the original paper."""
     offset_reg_loss: float = 1e-3
@@ -122,6 +119,8 @@ class AvatarMAVModelConfig(ModelConfig):
     """Expression code dimension for the AvatarMAV field."""
     headmodule_deform_bs_res: int = 32
     """Resolution of the deformation grid in the AvatarMAV field."""
+    headmodule_disable_viewdir_dependence: bool = True
+    """Whether to multiply by 0 the viewdir embedding in the AvatarMAV field."""
     num_cameras_per_batch: int = 4
     """Number of cameras per batch - this MUST BE the same as passed to the datamanager!"""
     use_l1_loss: bool = False
@@ -151,15 +150,13 @@ class AvatarMAVModel(Model):
             self.scene_box.aabb,
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
+            num_cameras_per_batch=self.config.num_cameras_per_batch,
             headmodule_feature_res=self.config.headmodule_feature_res,
             headmodule_exp_dim=self.config.headmodule_exp_dim,
             headmodule_deform_bs_res=self.config.headmodule_deform_bs_res,
-            num_cameras_per_batch=self.config.num_cameras_per_batch,
+            headmodule_disable_viewdir_dependence=self.config.headmodule_disable_viewdir_dependence,
         )
 
-        self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
-            num_cameras=self.num_train_data, device="cpu"
-        )
         self.density_fns = []
         num_prop_nets = self.config.num_proposal_iterations
         # Build the proposal network(s)
@@ -241,7 +238,6 @@ class AvatarMAVModel(Model):
         param_groups = {}
         param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
         param_groups["fields"] = list(self.field.parameters())
-        self.camera_optimizer.get_param_groups(param_groups=param_groups)
         return param_groups
 
     def get_training_callbacks(
@@ -282,8 +278,6 @@ class AvatarMAVModel(Model):
 
     def get_outputs(self, ray_bundle: RayBundle):
         # apply the camera optimizer pose tweaks
-        if self.training:
-            self.camera_optimizer.apply_to_raybundle(ray_bundle)
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
         field_outputs = self.field.forward(ray_samples)
@@ -328,7 +322,6 @@ class AvatarMAVModel(Model):
             metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
             metrics_dict["offsets_norm"] = outputs["offsets"].norm(dim=-1).mean()
 
-        self.camera_optimizer.get_metrics_dict(metrics_dict)
         return metrics_dict
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
@@ -350,8 +343,6 @@ class AvatarMAVModel(Model):
             loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
             loss_dict["offset_reg_loss"] = self.config.offset_reg_loss * metrics_dict["offsets_norm"]
 
-            # Add loss from camera optimizer
-            self.camera_optimizer.get_loss_dict(loss_dict)
         return loss_dict
 
     def get_image_metrics_and_images(
