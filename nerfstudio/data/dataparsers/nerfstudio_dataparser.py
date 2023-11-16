@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, Type
@@ -98,8 +99,10 @@ class Nerfstudio(DataParser):
         assert self.config.data.exists(), f"Data directory {self.config.data} does not exist."
 
         if self.config.data.name.endswith("_train.json"):
-            split_str = split  # if split == "train" else "val"  # override for ns-eval!
-            transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split_str}.json"))
+            if os.environ.get("EVAL_TRANSFORMS_JSON_PATH"):
+                self.config.data = Path(os.environ["EVAL_TRANSFORMS_JSON_PATH"])
+                print(f"Overrode {split} transforms json path with: {self.config.data}")
+            transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split}.json"))
             meta = load_from_json(transforms_json_path)
             data_dir = self.config.data.parent
         elif self.config.data.suffix == ".json":
