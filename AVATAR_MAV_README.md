@@ -11,6 +11,32 @@ Writing commands below
 # [x] Gives eyeballs pose to expression param
 # [ ] Deformation field to proposal network?
 
+# Try without proposal nets
+ns-train avatarmav \
+    --output-dir outputs-no-proposal-nets \
+    --viewer.websocket-port 6009 \
+    --viewer.quit-on-train-completion True \
+    --pipeline.datamanager.eval-num-images-to-sample-from 32 \
+    --experiment-name 302-UNION \
+    --pipeline.datamanager.pixel-sampler.num-cameras-per-batch 32 \
+    --pipeline.model.num-cameras-per-batch 32 \
+    --pipeline.model.num-proposal-iterations 0 \
+    --pipeline.model.use-l1-loss True \
+    --pipeline.model.headmodule-feature-res 128 \
+    --pipeline.model.headmodule-exp-dim 64 \
+    --pipeline.model.headmodule-deform-bs-res 64 \
+    --optimizers.fields.optimizer.lr 5e-3 \
+    --optimizers.proposal_networks.optimizer.lr 1e-3 \
+    --pipeline.model.background-color white \
+    nerfstudio-data \
+    --data nersemble_masked/302/UNION_302_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine/transforms_train.json \
+    --apply-neck-rot-to-flame-pose True \
+    --apply-flame-poses-to-cams True \
+    --neck-pose-to-expr True \
+    --eyes-pose-to-expr True \
+    --scene-scale 0.2
+
+
 # MAIN TRAINING RUN FOR 074 (plus 302,304,253,264,218)
 ns-train avatarmav \
     --viewer.websocket-port 6009 \

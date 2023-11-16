@@ -73,7 +73,7 @@ class AvatarMAVModelConfig(ModelConfig):
     proposal_warmup: int = 5000
     """Scales n from 1 to proposal_update_every over this many steps"""
     num_proposal_iterations: int = 2
-    # TODO(LS) to match AvatarMAV paper, this should be 1
+    # TODO(LS) to match AvatarMAV paper, this should be 0?
     """Number of proposal network iterations."""
     use_same_proposal_network: bool = False
     # TODO(LS) to match AvatarMAV paper, this should be True
