@@ -27,24 +27,14 @@ from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Type, Uni
 import torch
 import torch.distributed as dist
 from PIL import Image
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    TextColumn,
-    TimeElapsedColumn,
-)
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 from torch import nn
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn import Parameter
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.cuda.amp.grad_scaler import GradScaler
 
 from nerfstudio.configs import base_config as cfg
-from nerfstudio.data.datamanagers.base_datamanager import (
-    DataManager,
-    DataManagerConfig,
-    VanillaDataManager,
-)
+from nerfstudio.data.datamanagers.base_datamanager import DataManager, DataManagerConfig, VanillaDataManager
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.models.base_model import Model, ModelConfig
@@ -383,7 +373,14 @@ class VanillaPipeline(Pipeline):
                     camera_indices = camera_ray_bundle.camera_indices
                     assert camera_indices is not None
                     for key, val in images_dict.items():
-                        Image.fromarray((val * 255).byte().cpu().numpy()).save(
+                        np_im = (val * 255).byte().cpu().numpy()
+                        if key == "img":
+                            width_div_2 = np_im.shape[1] // 2
+                            im_gt = Image.fromarray(np_im[:, :width_div_2])
+                            im_pr = Image.fromarray(np_im[:, width_div_2:])
+                            im_gt.save(output_path / "{0:06d}-{1}.jpg".format(int(camera_indices[0, 0, 0]), "gt"))
+                            im_pr.save(output_path / "{0:06d}-{1}.png".format(int(camera_indices[0, 0, 0]), "pr"))
+                        Image.fromarray(np_im).save(
                             output_path / "{0:06d}-{1}.jpg".format(int(camera_indices[0, 0, 0]), key)
                         )
                 assert "num_rays_per_sec" not in metrics_dict

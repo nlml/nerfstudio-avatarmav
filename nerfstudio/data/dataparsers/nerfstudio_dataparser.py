@@ -42,6 +42,14 @@ from nerfstudio.utils.rich_utils import CONSOLE
 MAX_AUTO_RESOLUTION = 1600
 
 
+def calc_scale_factor(tfms_train):
+    poses = torch.from_numpy(
+        np.array([np.array(f["transform_matrix"]) for f in tfms_train["frames"]]).astype(np.float32)
+    )
+    scale_factor = float(torch.max(torch.abs(poses[:, :3, 3])))
+    return 1.0 / scale_factor
+
+
 @dataclass
 class NerfstudioDataParserConfig(DataParserConfig):
     """Nerfstudio dataset config"""
@@ -98,7 +106,10 @@ class Nerfstudio(DataParser):
 
         assert self.config.data.exists(), f"Data directory {self.config.data} does not exist."
 
+        scale_factor_from_tfms_train = None
         if self.config.data.name.endswith("_train.json"):
+            # Compute scaling factor always with transforms_train.json!
+            scale_factor_from_tfms_train = calc_scale_factor(load_from_json(self.config.data))
             if os.environ.get("EVAL_TRANSFORMS_JSON_PATH"):
                 self.config.data = Path(os.environ["EVAL_TRANSFORMS_JSON_PATH"])
                 print(f"Overrode {split} transforms json path with: {self.config.data}")
@@ -252,6 +263,9 @@ class Nerfstudio(DataParser):
         scale_factor = 1.0
         if self.config.auto_scale_poses:
             scale_factor /= float(torch.max(torch.abs(poses[:, :3, 3])))
+            if scale_factor_from_tfms_train is not None:
+                print(f"Overriding scale factor of {scale_factor} with {scale_factor_from_tfms_train}")
+                scale_factor = scale_factor_from_tfms_train
         scale_factor *= self.config.scale_factor
 
         poses[:, :3, 3] *= scale_factor
