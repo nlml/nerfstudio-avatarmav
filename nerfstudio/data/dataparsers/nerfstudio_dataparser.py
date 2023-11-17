@@ -42,7 +42,8 @@ from nerfstudio.utils.rich_utils import CONSOLE
 MAX_AUTO_RESOLUTION = 1600
 
 
-def calc_scale_factor(tfms_train):
+def calc_scale_factor(tfms_train_json_path: Path):
+    tfms_train = load_from_json(tfms_train_json_path)
     poses = torch.from_numpy(
         np.array([np.array(f["transform_matrix"]) for f in tfms_train["frames"]]).astype(np.float32)
     )
@@ -109,13 +110,16 @@ class Nerfstudio(DataParser):
         scale_factor_from_tfms_train = None
         if self.config.data.name.endswith("_train.json"):
             # Compute scaling factor always with transforms_train.json!
-            scale_factor_from_tfms_train = calc_scale_factor(load_from_json(self.config.data))
+            transforms_json_path = self.config.data
+            # Always calc scale factor using _train.json:
+            scale_factor_from_tfms_train = calc_scale_factor(transforms_json_path)
+            # Switch _train.json to _{split}.json if we are not in train split
+            transforms_json_path = Path(str(transforms_json_path).replace("_train.json", f"_{split}.json"))
             if os.environ.get("EVAL_TRANSFORMS_JSON_PATH"):
-                self.config.data = Path(os.environ["EVAL_TRANSFORMS_JSON_PATH"])
-                print(f"Overrode {split} transforms json path with: {self.config.data}")
-            transforms_json_path = Path(str(self.config.data).replace("_train.json", f"_{split}.json"))
+                transforms_json_path = Path(os.environ["EVAL_TRANSFORMS_JSON_PATH"])
+                print(f"Overrode {split} transforms json path with: {transforms_json_path}")
             meta = load_from_json(transforms_json_path)
-            data_dir = self.config.data.parent
+            data_dir = transforms_json_path.parent
         elif self.config.data.suffix == ".json":
             meta = load_from_json(self.config.data)
             data_dir = self.config.data.parent
@@ -267,6 +271,7 @@ class Nerfstudio(DataParser):
                 print(f"Overriding scale factor of {scale_factor} with {scale_factor_from_tfms_train}")
                 scale_factor = scale_factor_from_tfms_train
         scale_factor *= self.config.scale_factor
+        print(scale_factor, "scale_factor")
 
         poses[:, :3, 3] *= scale_factor
 

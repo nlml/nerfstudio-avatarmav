@@ -388,6 +388,7 @@ class VanillaPipeline(Pipeline):
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
                 metrics_dict[fps_str] = metrics_dict["num_rays_per_sec"] / (height * width)
+                print(camera_indices[0, 0, 0].item(), metrics_dict)
                 metrics_dict_list.append(metrics_dict)
                 progress.advance(task)
         # average the metrics list
