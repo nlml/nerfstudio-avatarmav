@@ -5,11 +5,92 @@ Writing commands below
 ```bash
 # TODO
 # [x] Proper validation set loading and eval
-# [ ] Ability to render a set of images given a transforms.json
+# [x] Ability to render a set of images given a transforms.json
 # [ ] Add FG mask loss
 # [x] Dont load all ims into memory!
 # [x] Gives eyeballs pose to expression param
 # [ ] Deformation field to proposal network?
+
+#### This is the general command used for final training runs:
+#!/usr/bin/env bash
+echo "Start 074..."
+ns-train avatarmav \
+    --output-dir fixed-intrinsics \
+    --viewer.websocket-port 6009 \
+    --viewer.quit-on-train-completion True \
+    --pipeline.datamanager.eval-num-images-to-sample-from 32 \
+    --experiment-name 074-UNION \
+    --pipeline.datamanager.pixel-sampler.num-cameras-per-batch 32 \
+    --pipeline.model.num-cameras-per-batch 32 \
+    --pipeline.model.use-l1-loss True \
+    --pipeline.model.headmodule-feature-res 128 \
+    --pipeline.model.headmodule-exp-dim 64 \
+    --pipeline.model.headmodule-deform-bs-res 64 \
+    --optimizers.fields.optimizer.lr 5e-3 \
+    --optimizers.proposal_networks.optimizer.lr 1e-3 \
+    --pipeline.model.background-color white \
+    nerfstudio-data \
+    --data nersemble_masked/074/UNION_074_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine/transforms_train.json \
+    --apply-neck-rot-to-flame-pose True \
+    --apply-flame-poses-to-cams True \
+    --neck-pose-to-expr True \
+    --eyes-pose-to-expr True \
+    --scene-scale 0.2 \
+|| true
+echo "Done 074"
+
+
+#### This is the eval script for train and validation sets:
+#!/usr/bin/env bash
+# eval_many.sh
+
+USER_ID=$1
+
+# Ensure arg was provided:
+if [ -z "$USER_ID" ]; then
+    echo "Usage: ./eval_many.sh <USER_ID>"
+    exit 1
+fi
+
+RUN_ID=$USER_ID"-UNION"
+
+JSON_PATH="nersemble_masked/"$USER_ID"/UNION_"$USER_ID"_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine/transforms_val.json"
+./eval_script.sh $RUN_ID $JSON_PATH || true
+
+JSON_PATH="nersemble_masked/"$USER_ID"/UNION_"$USER_ID"_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine/transforms_test.json"
+
+
+#### Where below is eval_script.sh:
+#!/usr/bin/env bash
+# eval_script.sh
+
+# ./eval_script.sh 253-UNION nersemble_masked/253/253_FREE_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine/transforms_val.json
+
+RUN_NAME=$1
+EVAL_TRANSFORMS_JSON_PATH=$2
+
+# Ensure both arguments were provided:
+if [ -z "$RUN_NAME" ] || [ -z "$EVAL_TRANSFORMS_JSON_PATH" ]; then
+    echo "Usage: ./eval_script.sh <RUN_NAME> <EVAL_TRANSFORMS_JSON_PATH>"
+    exit 1
+fi
+
+RUN_DIR=$(ls -td fixed-intrinsics/$RUN_NAME/avatarmav/*/ | head -1)
+CFG_PATH=$RUN_DIR"config.yml"
+MDLS_PATH=$RUN_DIR"nerfstudio_models"
+
+echo $CFG_PATH
+echo $MDLS_PATH
+
+OUTDIR="fixed-intrinsics/eval_outputs/$RUN_NAME/$EVAL_TRANSFORMS_JSON_PATH"
+mkdir -p $OUTDIR
+
+EVAL_TRANSFORMS_JSON_PATH=$EVAL_TRANSFORMS_JSON_PATH ns-eval --load-config $CFG_PATH --output-path $OUTDIR/results.json --render-output-path $OUTDIR/images
+
+#### After running the above, `cp get_results_table.py /path/to/data/dir/fixed-intrinsics/eval_outputs/`
+#### then run `python get_results_table.py` to get the paper results tables and images.
+
+#### Commands below are from general experimenting:
 
 # Try without proposal nets
 ns-train avatarmav \
