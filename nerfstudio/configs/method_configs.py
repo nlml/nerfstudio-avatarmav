@@ -116,7 +116,6 @@ method_configs["avatarmav"] = TrainerConfig(
         ),
         model=AvatarMAVModelConfig(
             eval_num_rays_per_chunk=1 << 15,
-            disable_scene_contraction=True,
         ),
     ),
     optimizers={
@@ -723,3 +722,4 @@ AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (f
 """Union[] type over config types, annotated with default instances for use with
 tyro.cli(). Allows the user to pick between one of several base configurations, and
 then override values in it."""
+

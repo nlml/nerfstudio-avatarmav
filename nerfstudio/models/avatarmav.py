@@ -103,8 +103,6 @@ class AvatarMAVModelConfig(ModelConfig):
     """Max num iterations for the annealing function."""
     use_single_jitter: bool = True
     """Whether use single jitter or not for the proposal networks."""
-    disable_scene_contraction: bool = False
-    """Whether to disable scene contraction or not."""
     use_gradient_scaling: bool = False
     """Use gradient scaler where the gradients are lower for points closer to the camera."""
     implementation: Literal["tcnn", "torch"] = "tcnn"
@@ -125,6 +123,8 @@ class AvatarMAVModelConfig(ModelConfig):
     """Number of cameras per batch - this MUST BE the same as passed to the datamanager!"""
     use_l1_loss: bool = False
     """Use L1 loss instead of MSE loss for the RGB loss."""
+    disable_proposal_nets: bool = False
+    """Disable the proposal networks."""
 
 
 class AvatarMAVModel(Model):
@@ -140,15 +140,10 @@ class AvatarMAVModel(Model):
         """Set the fields and modules."""
         super().populate_modules()
 
-        if self.config.disable_scene_contraction:
-            scene_contraction = None
-        else:
-            scene_contraction = SceneContraction(order=float("inf"))
-
         # Fields
         self.field = AvatarMAVField(
             self.scene_box.aabb,
-            spatial_distortion=scene_contraction,
+            spatial_distortion=None,
             num_images=self.num_train_data,
             num_cameras_per_batch=self.config.num_cameras_per_batch,
             headmodule_feature_res=self.config.headmodule_feature_res,
@@ -158,10 +153,12 @@ class AvatarMAVModel(Model):
         )
 
         self.density_fns = []
-        num_prop_nets = self.config.num_proposal_iterations
+        num_prop_nets = self.config.num_proposal_iterations if not self.config.disable_proposal_nets else 0
         # Build the proposal network(s)
         self.proposal_networks = torch.nn.ModuleList()
-        if self.config.use_avatarmav_field_as_proposal_network:
+        if self.config.disable_proposal_nets:
+            self.proposal_networks = None
+        elif self.config.use_avatarmav_field_as_proposal_network:
             assert self.config.use_same_proposal_network
             self.proposal_networks.append(self.field)
             self.density_fns.append(self.field.density_fn)
@@ -170,7 +167,7 @@ class AvatarMAVModel(Model):
             prop_net_args = self.config.proposal_net_args_list[0]
             network = HashMLPDensityField(
                 self.scene_box.aabb,
-                spatial_distortion=scene_contraction,
+                spatial_distortion=None,
                 **prop_net_args,
                 implementation=self.config.implementation,
             )
@@ -181,7 +178,7 @@ class AvatarMAVModel(Model):
                 prop_net_args = self.config.proposal_net_args_list[min(i, len(self.config.proposal_net_args_list) - 1)]
                 network = HashMLPDensityField(
                     self.scene_box.aabb,
-                    spatial_distortion=scene_contraction,
+                    spatial_distortion=None,
                     **prop_net_args,
                     implementation=self.config.implementation,
                 )
@@ -201,14 +198,19 @@ class AvatarMAVModel(Model):
         if self.config.proposal_initial_sampler == "uniform":
             initial_sampler = UniformSampler(single_jitter=self.config.use_single_jitter)
 
-        self.proposal_sampler = ProposalNetworkSampler(
-            num_nerf_samples_per_ray=self.config.num_nerf_samples_per_ray,
-            num_proposal_samples_per_ray=self.config.num_proposal_samples_per_ray,
-            num_proposal_network_iterations=self.config.num_proposal_iterations,
-            single_jitter=self.config.use_single_jitter,
-            update_sched=update_schedule,
-            initial_sampler=initial_sampler,
-        )
+        if self.config.disable_proposal_nets:
+            self.proposal_sampler = UniformSampler(
+                single_jitter=self.config.use_single_jitter, num_samples=self.config.num_nerf_samples_per_ray
+            )
+        else:
+            self.proposal_sampler = ProposalNetworkSampler(
+                num_nerf_samples_per_ray=self.config.num_nerf_samples_per_ray,
+                num_proposal_samples_per_ray=self.config.num_proposal_samples_per_ray,
+                num_proposal_network_iterations=self.config.num_proposal_iterations,
+                single_jitter=self.config.use_single_jitter,
+                update_sched=update_schedule,
+                initial_sampler=initial_sampler,
+            )
 
         # Collider
         self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
@@ -236,7 +238,8 @@ class AvatarMAVModel(Model):
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
-        param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
+        if not self.config.disable_proposal_nets:
+            param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
         param_groups["fields"] = list(self.field.parameters())
         return param_groups
 
@@ -244,7 +247,7 @@ class AvatarMAVModel(Model):
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
         callbacks = []
-        if self.config.use_proposal_weight_anneal:
+        if self.config.use_proposal_weight_anneal and not self.config.disable_proposal_nets:
             # anneal the weights of the proposal network before doing PDF sampling
             N = self.config.proposal_weights_anneal_max_num_iters
 
@@ -279,14 +282,23 @@ class AvatarMAVModel(Model):
     def get_outputs(self, ray_bundle: RayBundle):
         # apply the camera optimizer pose tweaks
         ray_samples: RaySamples
-        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
+
+        if self.config.disable_proposal_nets:
+            # In this case, proposal_sampler is just a uniform sampler
+            ray_samples = self.proposal_sampler(ray_bundle)
+        else:
+            ray_samples, weights_list, ray_samples_list = self.proposal_sampler(
+                ray_bundle, density_fns=self.density_fns
+            )
+
         field_outputs = self.field.forward(ray_samples)
         if self.config.use_gradient_scaling:
             field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
 
         weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
-        weights_list.append(weights)
-        ray_samples_list.append(ray_samples)
+        if not self.config.disable_proposal_nets:
+            weights_list.append(weights)
+            ray_samples_list.append(ray_samples)
 
         rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
         with torch.no_grad():
@@ -303,12 +315,15 @@ class AvatarMAVModel(Model):
         }
 
         # These use a lot of GPU memory, so we avoid storing them for eval.
-        if self.training:
+        if self.training and not self.config.disable_proposal_nets:
             outputs["weights_list"] = weights_list
             outputs["ray_samples_list"] = ray_samples_list
 
-        for i in range(self.config.num_proposal_iterations):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
+        if not self.config.disable_proposal_nets:
+            for i in range(self.config.num_proposal_iterations):
+                outputs[f"prop_depth_{i}"] = self.renderer_depth(
+                    weights=weights_list[i], ray_samples=ray_samples_list[i]
+                )
         return outputs
 
     def get_metrics_dict(self, outputs, batch):
@@ -319,7 +334,8 @@ class AvatarMAVModel(Model):
         metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
 
         if self.training:
-            metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+            if not self.config.disable_proposal_nets:
+                metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
             metrics_dict["offsets_norm"] = outputs["offsets"].norm(dim=-1).mean()
 
         return metrics_dict
@@ -335,12 +351,13 @@ class AvatarMAVModel(Model):
 
         loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
         if self.training:
-            if self.config.interlevel_loss_mult > 0:
-                loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
-                    outputs["weights_list"], outputs["ray_samples_list"]
-                )
-            assert metrics_dict is not None and "distortion" in metrics_dict
-            loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
+            if not self.config.disable_proposal_nets:
+                if self.config.interlevel_loss_mult > 0:
+                    loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
+                        outputs["weights_list"], outputs["ray_samples_list"]
+                    )
+                assert metrics_dict is not None and "distortion" in metrics_dict
+                loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
             loss_dict["offset_reg_loss"] = self.config.offset_reg_loss * metrics_dict["offsets_norm"]
 
         return loss_dict

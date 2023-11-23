@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Field for compound nerf model, adds scene contraction and image embeddings to instant ngp
+Field for AvatarMAV, originally based off Nerfacto.
 """
 
 
