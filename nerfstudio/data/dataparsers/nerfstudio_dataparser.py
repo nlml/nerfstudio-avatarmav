@@ -28,12 +28,6 @@ from nerfstudio.cameras import camera_utils
 from nerfstudio.cameras.cameras import CAMERA_MODEL_TO_TYPE, Cameras, CameraType
 from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig, DataparserOutputs
 from nerfstudio.data.scene_box import SceneBox
-from nerfstudio.data.utils.dataparsers_utils import (
-    get_train_eval_split_all,
-    get_train_eval_split_filename,
-    get_train_eval_split_fraction,
-    get_train_eval_split_interval,
-)
 from nerfstudio.fields.avatar_mav_field import _so3_exp_map
 from nerfstudio.flame.flame import FlameHead
 from nerfstudio.utils.io import load_from_json
@@ -93,6 +87,8 @@ class NerfstudioDataParserConfig(DataParserConfig):
     """If True, neck rotation will be passed to the conditioning expression no matter what!"""
     eyes_pose_to_expr: bool = False
     """If True, eyes rotation will be passed to the conditioning expression code."""
+    disable_scaling: bool = False
+    """If True, disable all scale_factor stuff."""
 
 
 @dataclass
@@ -112,7 +108,8 @@ class Nerfstudio(DataParser):
             # Compute scaling factor always with transforms_train.json!
             transforms_json_path = self.config.data
             # Always calc scale factor using _train.json:
-            scale_factor_from_tfms_train = calc_scale_factor(transforms_json_path)
+            if not self.config.disable_scaling:
+                scale_factor_from_tfms_train = calc_scale_factor(transforms_json_path)
             # Switch _train.json to _{split}.json if we are not in train split
             transforms_json_path = Path(str(transforms_json_path).replace("_train.json", f"_{split}.json"))
             if os.environ.get("EVAL_TRANSFORMS_JSON_PATH"):
@@ -265,14 +262,14 @@ class Nerfstudio(DataParser):
 
         # Scale poses
         scale_factor = 1.0
-        if self.config.auto_scale_poses:
-            scale_factor /= float(torch.max(torch.abs(poses[:, :3, 3])))
-            if scale_factor_from_tfms_train is not None:
-                print(f"Overriding scale factor of {scale_factor} with {scale_factor_from_tfms_train}")
-                scale_factor = scale_factor_from_tfms_train
-        scale_factor *= self.config.scale_factor
-        print(scale_factor, "scale_factor")
-
+        if not self.config.disable_scaling:
+            if self.config.auto_scale_poses:
+                scale_factor /= float(torch.max(torch.abs(poses[:, :3, 3])))
+                if scale_factor_from_tfms_train is not None:
+                    print(f"Overriding scale factor of {scale_factor} with {scale_factor_from_tfms_train}")
+                    scale_factor = scale_factor_from_tfms_train
+            scale_factor *= self.config.scale_factor
+        print(f"scale_factor: {scale_factor}")
         poses[:, :3, 3] *= scale_factor
 
         # Choose image_filenames and poses based on split, but after auto orient and scaling the poses.
@@ -385,7 +382,7 @@ class Nerfstudio(DataParser):
             camera_to_worlds=poses[:, :3, :4],
             camera_type=camera_type,
             metadata={
-                "flame_poses": flame_poses,
+                # "flame_poses": flame_poses,
                 "flame_exps": flame_exps,
             },
         )
