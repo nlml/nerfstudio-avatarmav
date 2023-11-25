@@ -14,6 +14,7 @@ Writing commands below
 #### Config for no proposal sampler:
 ns-train avatarmav \
     --output-dir disablePropNets_aabbCollider_128nerfSamples_fixSceneScale \
+    --pipeline.model.use-aabb-box-collider True \
     --pipeline.model.disable-proposal-nets True \
     --pipeline.model.num-nerf-samples-per-ray 128 \
     --viewer.websocket-port 6009 \

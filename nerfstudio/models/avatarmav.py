@@ -42,7 +42,7 @@ from nerfstudio.model_components.losses import (
 )
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
 from nerfstudio.model_components.renderers import AccumulationRenderer, DepthRenderer, NormalsRenderer, RGBRenderer
-from nerfstudio.model_components.scene_colliders import AABBBoxCollider
+from nerfstudio.model_components.scene_colliders import AABBBoxCollider, NearFarCollider
 from nerfstudio.model_components.shaders import NormalsShader
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
@@ -124,6 +124,8 @@ class AvatarMAVModelConfig(ModelConfig):
     """Use L1 loss instead of MSE loss for the RGB loss."""
     disable_proposal_nets: bool = False
     """Disable the proposal networks."""
+    use_aabb_box_collider: bool = False
+    """Use AABB box collider instead of near-far collider."""
 
 
 class AvatarMAVModel(Model):
@@ -212,8 +214,10 @@ class AvatarMAVModel(Model):
             )
 
         # Collider
-        # self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
-        self.collider = AABBBoxCollider(self.scene_box)
+        if self.config.use_aabb_box_collider:
+            self.collider = AABBBoxCollider(self.scene_box)
+        else:
+            self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
 
         # renderers
         self.renderer_rgb = RGBRenderer(background_color=self.config.background_color)
