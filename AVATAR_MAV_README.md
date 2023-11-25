@@ -13,13 +13,13 @@ Writing commands below
 
 #### Config for no proposal sampler:
 ns-train avatarmav \
-    --output-dir disable-proposal-nets-test \
+    --output-dir disablePropNets_aabbCollider_128nerfSamples_fixSceneScale \
     --pipeline.model.disable-proposal-nets True \
-    --pipeline.model.num-nerf-samples-per-ray 64 \
+    --pipeline.model.num-nerf-samples-per-ray 128 \
     --viewer.websocket-port 6009 \
     --viewer.quit-on-train-completion True \
     --pipeline.datamanager.eval-num-images-to-sample-from 32 \
-    --experiment-name 074-UNION \
+    --experiment-name $EXP_NAME \
     --pipeline.datamanager.pixel-sampler.num-cameras-per-batch 32 \
     --pipeline.model.num-cameras-per-batch 32 \
     --pipeline.model.use-l1-loss True \
@@ -30,12 +30,13 @@ ns-train avatarmav \
     --optimizers.proposal_networks.optimizer.lr 1e-3 \
     --pipeline.model.background-color white \
     nerfstudio-data \
-    --data nersemble_masked/074/UNION_074_EMO1234EXP234589_v16_DS2-0.5x_lmkSTAR_teethV3_SMOOTH_offsetS_whiteBg_maskBelowLine/transforms_train.json \
+    --data $JSON_PATH \
     --apply-neck-rot-to-flame-pose True \
     --apply-flame-poses-to-cams True \
     --neck-pose-to-expr True \
     --eyes-pose-to-expr True \
-    --scene-scale 0.2
+    --scene-scale 0.3 \
+    --disable-scaling True
 
 
 #### This is the general command used for final training runs:

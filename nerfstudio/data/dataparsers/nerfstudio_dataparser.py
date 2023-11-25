@@ -158,6 +158,10 @@ class Nerfstudio(DataParser):
             fname = self._get_fname(filepath, data_dir)
             fnames.append(fname)
         inds = np.argsort(fnames)
+        if (selcams := os.environ.get("SELECTED_CAMS")) is not None:
+            selcams = set([int(i) for i in selcams.split()])
+            print(f"Selecting cams: {selcams}")
+            inds = [ind for ind in inds if meta["frames"][ind]["camera_index"] in selcams]
         frames = [meta["frames"][ind] for ind in inds]
 
         for frame in frames:

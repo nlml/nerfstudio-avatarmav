@@ -18,31 +18,19 @@ Field for AvatarMAV, originally based off Nerfacto.
 
 
 import os
-from typing import Dict, Literal, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
 from einops import rearrange
-from torch import Tensor
-from torch import functional as F
-from torch import nn
+from torch import Tensor, nn
 
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.field_components.activations import trunc_exp
 from nerfstudio.field_components.avatarmav import MLP as AvatarMavMLP
 from nerfstudio.field_components.avatarmav import get_embedder
-from nerfstudio.field_components.embedding import Embedding
-from nerfstudio.field_components.encodings import HashEncoding, NeRFEncoding, SHEncoding
-from nerfstudio.field_components.field_heads import (
-    FieldHeadNames,
-    PredNormalsFieldHead,
-    SemanticFieldHead,
-    TransientDensityFieldHead,
-    TransientRGBFieldHead,
-    UncertaintyFieldHead,
-)
-from nerfstudio.field_components.mlp import MLP
+from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SpatialDistortion
 from nerfstudio.fields.base_field import Field, get_normalized_directions
 

@@ -31,7 +31,6 @@ from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
 from nerfstudio.field_components.field_heads import FieldHeadNames
-from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.fields.avatar_mav_field import AvatarMAVField
 from nerfstudio.fields.density_fields import HashMLPDensityField
 from nerfstudio.model_components.losses import (
@@ -43,7 +42,7 @@ from nerfstudio.model_components.losses import (
 )
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
 from nerfstudio.model_components.renderers import AccumulationRenderer, DepthRenderer, NormalsRenderer, RGBRenderer
-from nerfstudio.model_components.scene_colliders import NearFarCollider
+from nerfstudio.model_components.scene_colliders import AABBBoxCollider
 from nerfstudio.model_components.shaders import NormalsShader
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
@@ -213,7 +212,8 @@ class AvatarMAVModel(Model):
             )
 
         # Collider
-        self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+        # self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+        self.collider = AABBBoxCollider(self.scene_box)
 
         # renderers
         self.renderer_rgb = RGBRenderer(background_color=self.config.background_color)
@@ -392,12 +392,13 @@ class AvatarMAVModel(Model):
 
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
 
-        for i in range(self.config.num_proposal_iterations):
-            key = f"prop_depth_{i}"
-            prop_depth_i = colormaps.apply_depth_colormap(
-                outputs[key],
-                accumulation=outputs["accumulation"],
-            )
-            images_dict[key] = prop_depth_i
+        if not self.config.disable_proposal_nets:
+            for i in range(self.config.num_proposal_iterations):
+                key = f"prop_depth_{i}"
+                prop_depth_i = colormaps.apply_depth_colormap(
+                    outputs[key],
+                    accumulation=outputs["accumulation"],
+                )
+                images_dict[key] = prop_depth_i
 
         return metrics_dict, images_dict
